@@ -1,0 +1,24 @@
+{
+  "name": "mcp-optimizely-cms",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "vercel dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "MCP server for Optimizely SaaS CMS",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@upstash/redis": "^1.37.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@vercel/node": "^5.6.15",
+    "typescript": "^5.9.3"
+  }
+}
