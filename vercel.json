@@ -1,14 +1,12 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": ".",
   "rewrites": [
     {
       "source": "/.well-known/oauth-authorization-server",
-      "destination": "/api/.well-known/oauth-authorization-server"
+      "destination": "/api/oauth-metadata"
     },
     { "source": "/authorize", "destination": "/api/authorize" },
-    { "source": "/token", "destination": "/api/token" },
+    { "source": "/token",     "destination": "/api/token" },
     { "source": "/register", "destination": "/api/register" },
-    { "source": "/mcp", "destination": "/api/mcp" }
+    { "source": "/mcp",      "destination": "/api/mcp" }
   ]
 }
