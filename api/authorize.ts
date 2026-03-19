@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { generateAuthCode } from "../src/auth.js";
+import { generateAuthCode } from "../src/auth";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -18,9 +18,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: "missing redirect_uri" });
   }
 
-  // Generate auth code immediately (no real login required — env vars handle auth)
   const code = generateAuthCode(redirectUri, codeChallenge);
-
   const url = new URL(redirectUri);
   url.searchParams.set("code", code);
   if (state) url.searchParams.set("state", state);
