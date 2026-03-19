@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { registerClient } from "../src/auth.js";
+import { registerClient } from "../src/auth";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -15,7 +15,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const body = req.body || {};
-  const redirectUris = body.redirect_uris || [];
+  const redirectUris: string[] = body.redirect_uris || [];
 
   const { clientId, clientSecret } = registerClient(redirectUris);
 
