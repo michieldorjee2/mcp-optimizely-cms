@@ -1,10 +1,14 @@
 import { z } from "zod";
-import { introspectContentType, mapGraphQLTypeToCmsType, isUserField } from "../services/graph-api.js";
-import { saveTemplate, getTemplate } from "../services/template-store.js";
-import type { Template, TemplateField } from "../types.js";
+import { introspectContentType, mapGraphQLTypeToCmsType, isUserField } from "../services/graph-api";
+import { saveTemplate, getTemplate } from "../services/template-store";
+import type { Template, TemplateField } from "../types";
 
 export const createTemplateSchema = z.object({
-  contentTypeName: z.string().describe("The name of a page/content type in Optimizely Graph (e.g. 'CompetitorComparisonPage')"),
+  contentTypeName: z
+    .string()
+    .describe(
+      "The name of a page/content type in Optimizely Graph (e.g. 'CompetitorComparisonPage')"
+    ),
 });
 
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;
