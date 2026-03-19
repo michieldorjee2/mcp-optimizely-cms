@@ -1,4 +1,4 @@
-import type { CmsContentBody, CmsContentResponse, CmsTokenResponse } from "../types.js";
+import type { CmsContentBody, CmsContentResponse, CmsTokenResponse } from "../types";
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
 const CMS_API_VERSION = "v0.4";
@@ -33,7 +33,11 @@ export async function getCmsToken(clientId: string, clientSecret: string): Promi
   return cachedToken.token;
 }
 
-async function cmsHeaders(clientId: string, clientSecret: string, extra?: Record<string, string>) {
+async function cmsHeaders(
+  clientId: string,
+  clientSecret: string,
+  extra?: Record<string, string>
+): Promise<Record<string, string>> {
   const token = await getCmsToken(clientId, clientSecret);
   return {
     Authorization: `Bearer ${token}`,
