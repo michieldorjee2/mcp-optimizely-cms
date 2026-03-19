@@ -1,14 +1,16 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createMcpServer } from "../src/server.js";
+import { createMcpServer } from "../src/server";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { validateToken } from "../src/auth.js";
+import { validateToken } from "../src/auth";
 
-// Session store for active transports
-const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: ReturnType<typeof createMcpServer> }>();
+// Session store for active transports (lives for the duration of the function instance)
+const sessions = new Map<
+  string,
+  { transport: StreamableHTTPServerTransport; server: ReturnType<typeof createMcpServer> }
+>();
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader(
@@ -21,7 +23,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(204).end();
   }
 
-  // Validate bearer token
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
@@ -50,7 +51,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === "POST") {
     if (!sessionId || !sessions.has(sessionId)) {
-      // New session — create transport and server
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => crypto.randomUUID(),
         onsessioninitialized: (newSessionId) => {
@@ -74,7 +74,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    // Existing session
     const { transport } = sessions.get(sessionId)!;
     await transport.handleRequest(
       req as unknown as IncomingMessage,
