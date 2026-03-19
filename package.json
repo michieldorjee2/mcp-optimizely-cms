@@ -2,9 +2,8 @@
   "name": "mcp-optimizely-cms",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --noEmit",
     "dev": "vercel dev"
   },
   "keywords": [],
