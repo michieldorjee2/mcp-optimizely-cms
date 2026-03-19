@@ -1,14 +1,23 @@
 import { createHmac, randomBytes } from "node:crypto";
 
-const AUTH_CODES = new Map<string, { redirectUri: string; codeChallenge?: string; createdAt: number }>();
-const REGISTERED_CLIENTS = new Map<string, { clientSecret: string; redirectUris: string[] }>();
+const AUTH_CODES = new Map<
+  string,
+  { redirectUri: string; codeChallenge?: string; createdAt: number }
+>();
+const REGISTERED_CLIENTS = new Map<
+  string,
+  { clientSecret: string; redirectUris: string[] }
+>();
 
 function getAuthSecret(): string {
   return process.env.MCP_AUTH_SECRET || "default-dev-secret";
 }
 
 export function getBaseUrl(req: Request): string {
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
+  const host =
+    req.headers.get("x-forwarded-host") ||
+    req.headers.get("host") ||
+    "localhost:3000";
   const proto = req.headers.get("x-forwarded-proto") || "https";
   return `${proto}://${host}`;
 }
@@ -19,8 +28,7 @@ export function generateToken(): string {
     exp: Math.floor(Date.now() / 1000) + 3600,
     scope: "mcp:full",
   };
-  const payloadStr = JSON.stringify(payload);
-  const payloadB64 = Buffer.from(payloadStr).toString("base64url");
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const headerB64 = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const sig = createHmac("sha256", getAuthSecret())
     .update(`${headerB64}.${payloadB64}`)
@@ -48,7 +56,6 @@ export function validateToken(token: string): boolean {
 export function generateAuthCode(redirectUri: string, codeChallenge?: string): string {
   const code = randomBytes(32).toString("hex");
   AUTH_CODES.set(code, { redirectUri, codeChallenge, createdAt: Date.now() });
-  // Clean up old codes (> 5 min)
   for (const [k, v] of AUTH_CODES) {
     if (Date.now() - v.createdAt > 300_000) AUTH_CODES.delete(k);
   }
@@ -67,7 +74,9 @@ export function consumeAuthCode(code: string, redirectUri: string): boolean {
   return true;
 }
 
-export function registerClient(redirectUris: string[]): { clientId: string; clientSecret: string } {
+export function registerClient(
+  redirectUris: string[]
+): { clientId: string; clientSecret: string } {
   const clientId = `mcp-client-${randomBytes(16).toString("hex")}`;
   const clientSecret = randomBytes(32).toString("hex");
   REGISTERED_CLIENTS.set(clientId, { clientSecret, redirectUris });
