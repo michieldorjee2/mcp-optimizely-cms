@@ -13,12 +13,12 @@ function getAuthSecret(): string {
   return process.env.MCP_AUTH_SECRET || "default-dev-secret";
 }
 
-export function getBaseUrl(req: Request): string {
+export function getBaseUrl(headers: Record<string, string | string[] | undefined>): string {
   const host =
-    req.headers.get("x-forwarded-host") ||
-    req.headers.get("host") ||
+    (headers["x-forwarded-host"] as string) ||
+    (headers["host"] as string) ||
     "localhost:3000";
-  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const proto = (headers["x-forwarded-proto"] as string) || "https";
   return `${proto}://${host}`;
 }
 

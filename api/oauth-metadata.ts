@@ -11,6 +11,6 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(204).end();
   }
 
-  const baseUrl = getBaseUrl(req as unknown as Request);
+  const baseUrl = getBaseUrl(req.headers);
   return res.status(200).json(getServerMetadata(baseUrl));
 }
