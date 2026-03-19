@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { generateToken, consumeAuthCode } from "../src/auth.js";
+import { generateToken, consumeAuthCode } from "../src/auth";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -18,7 +18,6 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   const grantType = body.grant_type;
 
   if (grantType === "client_credentials") {
-    // For client_credentials, we just issue a token — real auth is via env vars
     const token = generateToken();
     return res.status(200).json({
       access_token: token,
@@ -33,12 +32,18 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     const redirectUri = body.redirect_uri;
 
     if (!code || !redirectUri) {
-      return res.status(400).json({ error: "invalid_request", error_description: "Missing code or redirect_uri" });
+      return res.status(400).json({
+        error: "invalid_request",
+        error_description: "Missing code or redirect_uri",
+      });
     }
 
     const valid = consumeAuthCode(code, redirectUri);
     if (!valid) {
-      return res.status(400).json({ error: "invalid_grant", error_description: "Invalid or expired authorization code" });
+      return res.status(400).json({
+        error: "invalid_grant",
+        error_description: "Invalid or expired authorization code",
+      });
     }
 
     const token = generateToken();
