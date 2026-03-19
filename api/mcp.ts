@@ -2,7 +2,6 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createMcpServer } from "../src/server";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { validateToken } from "../src/auth";
 
 const sessions = new Map<
   string,
@@ -15,27 +14,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, Accept, Mcp-Session-Id, MCP-Protocol-Version"
+      "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version"
     );
     res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
 
     if (req.method === "OPTIONS") {
       return res.status(204).end();
-    }
-
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        error: "unauthorized",
-        error_description: "Missing or invalid Bearer token",
-      });
-    }
-    const token = authHeader.slice(7);
-    if (!validateToken(token)) {
-      return res.status(401).json({
-        error: "unauthorized",
-        error_description: "Invalid or expired token",
-      });
     }
 
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
