@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getContent, updateContent } from "../services/cms-api.js";
+import { getContent, updateContent } from "../services/cms-api";
 
 export const updatePageSchema = z.object({
   contentId: z.string().describe("The content ID of the page to update"),
@@ -17,10 +17,9 @@ export async function updatePage(
   clientId: string,
   clientSecret: string
 ) {
-  const { data: existing, etag } = await getContent(clientId, clientSecret, input.contentId);
+  const { etag } = await getContent(clientId, clientSecret, input.contentId);
 
   const patchBody: Record<string, unknown> = {};
-
   if (input.displayName) patchBody.displayName = input.displayName;
   if (input.routeSegment) patchBody.routeSegment = input.routeSegment;
   if (input.locale) patchBody.locale = input.locale;
