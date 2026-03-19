@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createPageSchema, createPage } from "./tools/create-page.js";
-import { updatePageSchema, updatePage } from "./tools/update-page.js";
-import { listTemplatesSchema, listTemplatesHandler } from "./tools/list-templates.js";
-import { createTemplateSchema, createTemplate } from "./tools/create-template.js";
+import { createPageSchema, createPage } from "./tools/create-page";
+import { updatePageSchema, updatePage } from "./tools/update-page";
+import { listTemplatesSchema, listTemplatesHandler } from "./tools/list-templates";
+import { createTemplateSchema, createTemplate } from "./tools/create-template";
 
 export function createMcpServer() {
   const server = new McpServer({
@@ -26,7 +26,9 @@ export function createMcpServer() {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
       const clientSecret = process.env.OPTIMIZELY_CMS_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials: set OPTIMIZELY_CMS_CLIENT_ID and OPTIMIZELY_CMS_CLIENT_SECRET env vars" }) }],
+        };
       }
       try {
         const result = await createPage(params, clientId, clientSecret);
@@ -52,7 +54,9 @@ export function createMcpServer() {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
       const clientSecret = process.env.OPTIMIZELY_CMS_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials: set OPTIMIZELY_CMS_CLIENT_ID and OPTIMIZELY_CMS_CLIENT_SECRET env vars" }) }],
+        };
       }
       try {
         const result = await updatePage(params, clientId, clientSecret);
@@ -88,7 +92,9 @@ export function createMcpServer() {
     async (params) => {
       const graphKey = process.env.OPTIMIZELY_GRAPH_KEY;
       if (!graphKey) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: "Missing Graph API key" }) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: "Missing Graph API key: set OPTIMIZELY_GRAPH_KEY env var" }) }],
+        };
       }
       try {
         const result = await createTemplate(params, graphKey);
