@@ -7,7 +7,7 @@ export const updatePageSchema = z.object({
   displayName: z.string().optional().describe("New display name"),
   routeSegment: z.string().optional().describe("New URL route segment"),
   status: z.string().optional().describe("New status: 'draft' or 'published'"),
-  properties: z.record(z.unknown()).default({}).describe("Key-value map of properties to update"),
+  propertiesJson: z.string().default("{}").describe("JSON-encoded object of properties to update (e.g. '{\"title\": \"New Title\"}')" ),
 });
 
 export type UpdatePageInput = z.infer<typeof updatePageSchema>;
@@ -17,6 +17,14 @@ export async function updatePage(
   clientId: string,
   clientSecret: string
 ) {
+  // Parse properties from JSON string
+  let properties: Record<string, unknown> = {};
+  try {
+    properties = JSON.parse(input.propertiesJson || "{}");
+  } catch {
+    return { success: false, error: "Invalid JSON in propertiesJson. Must be a valid JSON object." };
+  }
+
   const { data: existing, etag } = await getContent(clientId, clientSecret, input.contentId);
 
   const patchBody: Record<string, unknown> = {};
@@ -27,8 +35,8 @@ export async function updatePage(
   if (input.status) {
     patchBody.status = input.status;
   }
-  if (Object.keys(input.properties).length > 0) {
-    patchBody.properties = input.properties;
+  if (Object.keys(properties).length > 0) {
+    patchBody.properties = properties;
   }
 
   const result = await updateContent(clientId, clientSecret, input.contentId, patchBody, etag);

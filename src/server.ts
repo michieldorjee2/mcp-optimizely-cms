@@ -12,7 +12,7 @@ export function createMcpServer() {
 
   server.tool(
     "create_page",
-    "Create a new page or content item in Optimizely CMS. Requires a content type, display name, and properties. Will auto-introspect and validate against the content type schema — no need to call create_template first.",
+    "Create a new page or content item in Optimizely CMS. Requires a content type, display name, and propertiesJson (a JSON string). Will auto-introspect and validate against the content type schema — no need to call create_template first.",
     {
       contentType: createPageSchema.shape.contentType,
       name: createPageSchema.shape.name,
@@ -20,7 +20,7 @@ export function createMcpServer() {
       parentId: createPageSchema.shape.parentId,
       status: createPageSchema.shape.status,
       routeSegment: createPageSchema.shape.routeSegment,
-      properties: createPageSchema.shape.properties,
+      propertiesJson: createPageSchema.shape.propertiesJson,
     },
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
@@ -40,14 +40,14 @@ export function createMcpServer() {
 
   server.tool(
     "update_page",
-    "Update an existing page or content item in Optimizely CMS. Fetches the current version for ETag concurrency, then applies a merge patch with the provided properties.",
+    "Update an existing page or content item in Optimizely CMS. Fetches the current version for ETag concurrency, then applies a merge patch with the provided propertiesJson (a JSON string).",
     {
       contentId: updatePageSchema.shape.contentId,
       locale: updatePageSchema.shape.locale,
       displayName: updatePageSchema.shape.displayName,
       routeSegment: updatePageSchema.shape.routeSegment,
       status: updatePageSchema.shape.status,
-      properties: updatePageSchema.shape.properties,
+      propertiesJson: updatePageSchema.shape.propertiesJson,
     },
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
@@ -82,7 +82,7 @@ export function createMcpServer() {
 
   server.tool(
     "create_template",
-    "Create a flat, LLM-friendly template for a content type using the CMS content types API. Returns properties with accurate required flags, validation constraints (min/max items, string lengths, enums/picklists), and example values ready for create_page. Use force=true to overwrite.",
+    "Create a flat, LLM-friendly template for a content type using the CMS content types API. Returns properties with accurate required flags, validation constraints (min/max items, string lengths), and example values ready for create_page. Use force=true to overwrite.",
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,
       force: createTemplateSchema.shape.force,

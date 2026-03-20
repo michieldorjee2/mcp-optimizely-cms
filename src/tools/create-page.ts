@@ -11,7 +11,7 @@ export const createPageSchema = z.object({
   parentId: z.string().optional().describe("Parent container content ID"),
   status: z.string().default("published").describe("Content status: 'draft' or 'published' (default: 'published')"),
   routeSegment: z.string().optional().describe("URL route segment for the page"),
-  properties: z.record(z.unknown()).default({}).describe("Key-value map of content properties"),
+  propertiesJson: z.string().default("{}").describe("JSON-encoded object of content properties (e.g. '{\"title\": \"Hello\", \"body\": \"World\"}')" ),
 });
 
 export type CreatePageInput = z.infer<typeof createPageSchema>;
@@ -111,6 +111,14 @@ export async function createPage(
   clientSecret: string,
   graphKey?: string
 ) {
+  // Parse properties from JSON string
+  let properties: Record<string, unknown> = {};
+  try {
+    properties = JSON.parse(input.propertiesJson || "{}");
+  } catch {
+    return { success: false, error: "Invalid JSON in propertiesJson. Must be a valid JSON object." };
+  }
+
   // Try to load existing template, or auto-create one from CMS content type API
   let template: Template | null = await getTemplate(input.contentType).catch(() => null);
 
@@ -132,7 +140,7 @@ export async function createPage(
 
   // Validate against template
   if (template) {
-    const errors = validateProperties(input.properties, template.properties);
+    const errors = validateProperties(properties, template.properties);
     if (errors.length > 0) {
       return {
         success: false,
@@ -150,7 +158,7 @@ export async function createPage(
     status: input.status || "published",
     ...(input.parentId && { container: input.parentId }),
     ...(input.routeSegment && { routeSegment: input.routeSegment }),
-    ...(Object.keys(input.properties).length > 0 && { properties: input.properties }),
+    ...(Object.keys(properties).length > 0 && { properties }),
   };
 
   const result = await createContent(clientId, clientSecret, body);
