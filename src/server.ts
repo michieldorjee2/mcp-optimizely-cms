@@ -81,18 +81,23 @@ export function createMcpServer() {
 
   server.tool(
     "create_template",
-    "Create a flat, LLM-friendly template for a content type by introspecting Optimizely Graph. Returns a simple list of properties (key, type, example value) ready to fill in when calling create_page. Use force=true to overwrite an existing template.",
+    "Create a flat, LLM-friendly template for a content type using the CMS content types API. Returns properties with accurate required flags, validation constraints (min/max items, string lengths), and example values ready for create_page. Use force=true to overwrite.",
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,
       force: createTemplateSchema.shape.force,
     },
     async (params) => {
       const graphKey = process.env.OPTIMIZELY_GRAPH_KEY;
+      const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
+      const clientSecret = process.env.OPTIMIZELY_CMS_CLIENT_SECRET;
       if (!graphKey) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing Graph API key" }) }] };
       }
+      if (!clientId || !clientSecret) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
+      }
       try {
-        const result = await createTemplate(params, graphKey);
+        const result = await createTemplate(params, graphKey, clientId, clientSecret);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };

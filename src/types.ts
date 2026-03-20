@@ -11,12 +11,59 @@ export interface TemplateProperty {
   type: string;
   /** Whether this field is required */
   required: boolean;
-  /** Short description of what this field is for */
+  /** Short description of what this field is for (includes validation hints for LLMs) */
   description: string;
   /** Example value showing the exact JSON shape to pass */
   example: unknown;
   /** For object[] types: the keys each item object needs */
   itemShape?: Record<string, string>;
+  /** Minimum array items */
+  minItems?: number;
+  /** Maximum array items */
+  maxItems?: number;
+  /** Minimum string length */
+  minLength?: number;
+  /** Maximum string length */
+  maxLength?: number;
+  /** Regex pattern for string validation */
+  pattern?: string;
+  /** For contentId/contentId[] — which content types are accepted */
+  allowedTypes?: string[];
+  /** Allowed enum values */
+  enumValues?: string[];
+}
+
+/** CMS REST API content type property definition */
+export interface CmsContentTypeProperty {
+  type: string;
+  format?: string | null;
+  contentType?: string | null;
+  displayName?: string;
+  description?: string;
+  localized?: boolean;
+  required?: boolean;
+  group?: string;
+  sortOrder?: number;
+  minimum?: unknown;
+  maximum?: unknown;
+  minLength?: number | null;
+  maxLength?: number | null;
+  pattern?: string | null;
+  minItems?: number | null;
+  maxItems?: number | null;
+  allowedTypes?: string[];
+  restrictedTypes?: string[];
+  items?: { type?: string; contentType?: string; allowedTypes?: string[] };
+  enum?: Array<{ value: string; displayName?: string }>;
+}
+
+/** CMS REST API content type definition */
+export interface CmsContentType {
+  key: string;
+  displayName?: string;
+  description?: string;
+  baseType?: string;
+  properties?: Record<string, CmsContentTypeProperty>;
 }
 
 /**

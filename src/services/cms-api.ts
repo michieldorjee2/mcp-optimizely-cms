@@ -1,4 +1,4 @@
-import type { CmsContentBody, CmsContentResponse, CmsTokenResponse } from "../types.js";
+import type { CmsContentBody, CmsContentResponse, CmsTokenResponse, CmsContentType } from "../types.js";
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
 const CMS_API_VERSION = "preview3/experimental";
@@ -110,6 +110,25 @@ export async function updateContent(
   }
 
   return (await response.json()) as CmsContentResponse;
+}
+
+export async function getContentType(
+  clientId: string,
+  clientSecret: string,
+  key: string
+): Promise<CmsContentType> {
+  const headers = await cmsHeaders(clientId, clientSecret);
+  const response = await fetch(`${CMS_API_BASE}/preview3/contenttypes/${encodeURIComponent(key)}`, {
+    method: "GET",
+    headers,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Get content type failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as CmsContentType;
 }
 
 export async function listContentTypes(
