@@ -9,7 +9,7 @@ export const createPageSchema = z.object({
   name: z.string().describe("Display name for the page"),
   locale: z.string().default("en").describe("Content locale (default: 'en')"),
   parentId: z.string().optional().describe("Parent container content ID"),
-  status: z.string().default("draft").describe("Content status: 'draft' or 'published'"),
+  status: z.string().default("published").describe("Content status: 'draft' or 'published' (default: 'published')"),
   routeSegment: z.string().optional().describe("URL route segment for the page"),
   properties: z.record(z.unknown()).default({}).describe("Key-value map of content properties"),
 });
@@ -147,7 +147,7 @@ export async function createPage(
     contentType: input.contentType,
     displayName: input.name,
     locale: input.locale,
-    status: input.status || "draft",
+    status: input.status || "published",
     ...(input.parentId && { container: input.parentId }),
     ...(input.routeSegment && { routeSegment: input.routeSegment }),
     ...(Object.keys(input.properties).length > 0 && { properties: input.properties }),
