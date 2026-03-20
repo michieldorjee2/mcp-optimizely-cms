@@ -37,7 +37,7 @@ export async function createPage(
     contentType: input.contentType,
     displayName: input.name,
     locale: input.locale,
-    status: input.status === "published" ? "Published" : "Draft",
+    status: input.status || "draft",
     ...(input.parentId && { container: input.parentId }),
     ...(input.routeSegment && { routeSegment: input.routeSegment }),
     ...(Object.keys(input.properties).length > 0 && { properties: input.properties }),

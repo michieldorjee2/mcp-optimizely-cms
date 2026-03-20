@@ -25,7 +25,7 @@ export async function updatePage(
   if (input.routeSegment) patchBody.routeSegment = input.routeSegment;
   if (input.locale) patchBody.locale = input.locale;
   if (input.status) {
-    patchBody.status = input.status === "published" ? "Published" : "Draft";
+    patchBody.status = input.status;
   }
   if (Object.keys(input.properties).length > 0) {
     patchBody.properties = input.properties;
