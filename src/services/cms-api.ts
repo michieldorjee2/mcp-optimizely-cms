@@ -1,4 +1,4 @@
-import type { CmsContentBody, CmsContentResponse, CmsTokenResponse } from "../types";
+import type { CmsContentBody, CmsContentResponse, CmsTokenResponse } from "../types.js";
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
 const CMS_API_VERSION = "v0.4";
@@ -10,14 +10,15 @@ export async function getCmsToken(clientId: string, clientSecret: string): Promi
     return cachedToken.token;
   }
 
+  const params = new URLSearchParams();
+  params.set("grant_type", "client_credentials");
+  params.set("client_id", clientId);
+  params.set("client_secret", clientSecret);
+
   const response = await fetch(`${CMS_API_BASE}/oauth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
   });
 
   if (!response.ok) {
@@ -33,11 +34,7 @@ export async function getCmsToken(clientId: string, clientSecret: string): Promi
   return cachedToken.token;
 }
 
-async function cmsHeaders(
-  clientId: string,
-  clientSecret: string,
-  extra?: Record<string, string>
-): Promise<Record<string, string>> {
+async function cmsHeaders(clientId: string, clientSecret: string, extra?: Record<string, string>) {
   const token = await getCmsToken(clientId, clientSecret);
   return {
     Authorization: `Bearer ${token}`,

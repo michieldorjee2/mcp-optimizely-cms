@@ -1,4 +1,4 @@
-import type { GraphIntrospectionField } from "../types";
+import type { GraphIntrospectionField } from "../types.js";
 
 const GRAPH_URL = "https://cg.optimizely.com/content/v2";
 
@@ -56,11 +56,7 @@ export async function introspectContentType(
 
 export function mapGraphQLTypeToCmsType(field: GraphIntrospectionField): string {
   const type = field.type;
-  const typeName =
-    type.name ||
-    type.ofType?.name ||
-    type.ofType?.ofType?.name ||
-    "unknown";
+  const typeName = type.name || type.ofType?.name || type.ofType?.ofType?.name || "unknown";
 
   const mapping: Record<string, string> = {
     String: "string",
@@ -80,6 +76,16 @@ export function mapGraphQLTypeToCmsType(field: GraphIntrospectionField): string 
 
   return typeName.toLowerCase();
 }
+
+const INTERNAL_FIELDS = new Set([
+  "_metadata",
+  "_link",
+  "_children",
+  "_score",
+  "_fulltext",
+  "_modified",
+  "_created",
+]);
 
 export function isUserField(fieldName: string): boolean {
   return !fieldName.startsWith("_");

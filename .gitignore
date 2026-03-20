@@ -9,3 +9,4 @@ dist/
 !vercel.json
 !tsconfig.json
 !package.json
+.vercel

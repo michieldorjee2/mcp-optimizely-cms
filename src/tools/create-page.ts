@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { createContent } from "../services/cms-api";
-import { getTemplate } from "../services/template-store";
+import { createContent } from "../services/cms-api.js";
+import { getTemplate } from "../services/template-store.js";
 
 export const createPageSchema = z.object({
   contentType: z.string().describe("The content type key (e.g. 'CompetitorComparisonPage')"),

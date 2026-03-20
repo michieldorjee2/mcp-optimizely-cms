@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { listTemplates as listTemplatesFromStore } from "../services/template-store";
+import { listTemplates as listTemplatesFromStore } from "../services/template-store.js";
 
 export const listTemplatesSchema = z.object({
   filter: z.string().optional().describe("Optional filter string to match template names"),
