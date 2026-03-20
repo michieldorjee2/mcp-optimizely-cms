@@ -22,13 +22,13 @@ export async function createPage(
   const template = await getTemplate(input.contentType).catch(() => null);
 
   if (template) {
-    const requiredFields = template.fields.filter((f) => f.required).map((f) => f.name);
-    const missing = requiredFields.filter((f) => !(f in input.properties));
+    const requiredProps = template.properties.filter((p) => p.required).map((p) => p.key);
+    const missing = requiredProps.filter((k) => !(k in input.properties));
     if (missing.length > 0) {
       return {
         success: false,
-        error: `Missing required fields for ${input.contentType}: ${missing.join(", ")}`,
-        template: template.fields,
+        error: `Missing required properties for ${input.contentType}: ${missing.join(", ")}`,
+        template: template.properties,
       };
     }
   }

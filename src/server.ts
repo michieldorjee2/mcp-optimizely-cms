@@ -65,7 +65,7 @@ export function createMcpServer() {
 
   server.tool(
     "list_templates",
-    "List all saved content type templates. Templates define the field structure and validation rules for page types. Returns field names, types, and requirements.",
+    "List all saved content type templates. Each template has a flat list of properties with keys, types, examples, and whether they're required. Use this before create_page to see what properties a content type needs.",
     {
       filter: listTemplatesSchema.shape.filter,
     },
@@ -81,7 +81,7 @@ export function createMcpServer() {
 
   server.tool(
     "create_template",
-    "Create a template for a content type by introspecting its schema from Optimizely Graph. The template captures all fields, their types, sub-fields for complex objects, allowed types for content areas, and URL formats. Use force=true to overwrite an existing template.",
+    "Create a flat, LLM-friendly template for a content type by introspecting Optimizely Graph. Returns a simple list of properties (key, type, example value) ready to fill in when calling create_page. Use force=true to overwrite an existing template.",
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,
       force: createTemplateSchema.shape.force,

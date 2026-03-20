@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { introspectContentType, buildTemplateField, isUserField } from "../services/graph-api.js";
+import { introspectContentType, buildProperty, isUserField, clearTypeCache } from "../services/graph-api.js";
 import { saveTemplate, getTemplate, deleteTemplate } from "../services/template-store.js";
-import type { Template, TemplateField } from "../types.js";
+import type { Template, TemplateProperty } from "../types.js";
 
 export const createTemplateSchema = z.object({
   contentTypeName: z.string().describe("The name of a page/content type in Optimizely Graph (e.g. 'CompetitorComparisonPage')"),
@@ -18,7 +18,7 @@ export async function createTemplate(input: CreateTemplateInput, graphKey: strin
       error: `Template '${input.contentTypeName}' already exists. Use force=true to overwrite.`,
       existing: {
         name: existing.name,
-        fieldCount: existing.fields.length,
+        propertyCount: existing.properties.length,
         createdAt: existing.createdAt,
       },
     };
@@ -29,6 +29,9 @@ export async function createTemplate(input: CreateTemplateInput, graphKey: strin
     await deleteTemplate(input.contentTypeName).catch(() => {});
   }
 
+  // Clear the introspection cache so we get fresh data
+  clearTypeCache();
+
   const typeInfo = await introspectContentType(graphKey, input.contentTypeName);
   if (!typeInfo) {
     return {
@@ -37,19 +40,26 @@ export async function createTemplate(input: CreateTemplateInput, graphKey: strin
     };
   }
 
-  // Build rich field definitions with sub-type introspection
+  // Build flat property definitions with sub-type introspection
   const userFields = (typeInfo.fields || []).filter((f) => isUserField(f.name));
-  const fields: TemplateField[] = [];
+  const properties: TemplateProperty[] = [];
+  const contentReferences: string[] = [];
 
   for (const field of userFields) {
-    const richField = await buildTemplateField(graphKey, field);
-    fields.push(richField);
+    const { prop, isContentRef } = await buildProperty(graphKey, field);
+    if (prop) {
+      properties.push(prop);
+      if (isContentRef) {
+        contentReferences.push(prop.key);
+      }
+    }
   }
 
   const template: Template = {
     name: input.contentTypeName,
     contentType: input.contentTypeName,
-    fields,
+    properties,
+    contentReferences,
     createdAt: new Date().toISOString(),
   };
 
@@ -60,8 +70,9 @@ export async function createTemplate(input: CreateTemplateInput, graphKey: strin
     template: {
       name: template.name,
       contentType: template.contentType,
-      fieldCount: template.fields.length,
-      fields: template.fields,
+      propertyCount: template.properties.length,
+      properties: template.properties,
+      contentReferences: template.contentReferences,
       createdAt: template.createdAt,
     },
   };

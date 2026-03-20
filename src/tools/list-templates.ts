@@ -20,8 +20,9 @@ export async function listTemplatesHandler(input: ListTemplatesInput) {
     templates: filtered.map((t) => ({
       name: t.name,
       contentType: t.contentType,
-      fieldCount: t.fields.length,
-      fields: t.fields,
+      propertyCount: t.properties.length,
+      properties: t.properties,
+      contentReferences: t.contentReferences,
       createdAt: t.createdAt,
     })),
   };

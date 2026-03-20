@@ -1,51 +1,41 @@
-export interface TemplateFieldConstraints {
-  /** For string fields: max character length (if known) */
-  maxLength?: number;
-  /** For string fields: min character length */
-  minLength?: number;
-  /** For array/list fields: min items */
-  minItems?: number;
-  /** For array/list fields: max items */
-  maxItems?: number;
-}
-
-export interface TemplateSubField {
-  name: string;
+/**
+ * A single property in the flat template.
+ * Each entry maps directly to a key in the `properties` object passed to create_page.
+ */
+export interface TemplateProperty {
+  /** The property key to use in create_page properties */
+  key: string;
+  /** Human-readable label */
+  label: string;
+  /** How to fill this in: "string", "boolean", "number", "url", "object[]", "contentId", "contentId[]" */
   type: string;
+  /** Whether this field is required */
   required: boolean;
+  /** Short description of what this field is for */
   description: string;
-  /** For nested objects/arrays, sub-fields of the item type */
-  subFields?: TemplateSubField[];
+  /** Example value showing the exact JSON shape to pass */
+  example: unknown;
+  /** For object[] types: the keys each item object needs */
+  itemShape?: Record<string, string>;
 }
 
-export interface TemplateField {
-  name: string;
-  /** The CMS field type: string, integer, boolean, dateTime, contentArea, contentReference, link, richText, array, object */
-  type: string;
-  required: boolean;
-  description: string;
-  /** For content area / content reference fields: allowed content types */
-  allowedTypes?: string[];
-  /** For array/list fields: the type of each item */
-  itemType?: string;
-  /** For object/block fields or array items that are objects: sub-field definitions */
-  subFields?: TemplateSubField[];
-  /** For link/url fields: available URL formats */
-  urlFormats?: string[];
-  /** Validation constraints */
-  constraints?: TemplateFieldConstraints;
-  /** The raw GraphQL kind (SCALAR, OBJECT, LIST, INTERFACE, etc.) */
-  graphQLKind?: string;
-  /** The raw GraphQL type name */
-  graphQLTypeName?: string;
-}
-
+/**
+ * A flat, LLM-friendly template for a content type.
+ * The `properties` array is a simple list of "fill these in" fields,
+ * each with an example value showing the exact shape the CMS API expects.
+ */
 export interface Template {
   name: string;
   contentType: string;
-  fields: TemplateField[];
+  /** Flat list of properties to fill in when calling create_page */
+  properties: TemplateProperty[];
+  /** Fields that require references to existing content (can't be created inline) */
+  contentReferences: string[];
   createdAt: string;
 }
+
+// Keep old TemplateField as alias for backward compat in create-page validation
+export type TemplateField = TemplateProperty;
 
 export interface CmsContentBody {
   contentType: string[];
