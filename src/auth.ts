@@ -1,10 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 
-const AUTH_CODES = new Map<string, { redirectUri: string; codeChallenge?: string; createdAt: number }>();
-const REGISTERED_CLIENTS = new Map<string, { clientSecret: string; redirectUris: string[] }>();
-
 function getAuthSecret(): string {
-  return process.env.MCP_AUTH_SECRET || "default-dev-secret";
+  return process.env.MCP_AUTH_SECRET || "default-dev-secret-" + (process.env.OPTIMIZELY_CMS_CLIENT_ID || "local");
 }
 
 export function getBaseUrl(req: Request): string {
@@ -12,6 +9,10 @@ export function getBaseUrl(req: Request): string {
   const proto = req.headers.get("x-forwarded-proto") || "https";
   return `${proto}://${host}`;
 }
+
+// ---------------------------------------------------------------------------
+// JWT token generation & validation
+// ---------------------------------------------------------------------------
 
 export function generateToken(): string {
   const payload = {
@@ -45,33 +46,56 @@ export function validateToken(token: string): boolean {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Stateless auth codes — HMAC-signed so they work across serverless instances
+// ---------------------------------------------------------------------------
+
 export function generateAuthCode(redirectUri: string, codeChallenge?: string): string {
-  const code = randomBytes(32).toString("hex");
-  AUTH_CODES.set(code, { redirectUri, codeChallenge, createdAt: Date.now() });
-  for (const [k, v] of AUTH_CODES) {
-    if (Date.now() - v.createdAt > 300_000) AUTH_CODES.delete(k);
-  }
-  return code;
+  const payload = JSON.stringify({
+    redirectUri,
+    codeChallenge: codeChallenge || null,
+    exp: Date.now() + 300_000, // 5 minutes
+    nonce: randomBytes(8).toString("hex"),
+  });
+  const payloadB64 = Buffer.from(payload).toString("base64url");
+  const sig = createHmac("sha256", getAuthSecret())
+    .update(payloadB64)
+    .digest("base64url");
+  return `${payloadB64}.${sig}`;
 }
 
 export function consumeAuthCode(code: string, redirectUri: string): boolean {
-  const entry = AUTH_CODES.get(code);
-  if (!entry) return false;
-  if (entry.redirectUri !== redirectUri) return false;
-  if (Date.now() - entry.createdAt > 300_000) {
-    AUTH_CODES.delete(code);
+  try {
+    const dotIdx = code.lastIndexOf(".");
+    if (dotIdx === -1) return false;
+    const payloadB64 = code.slice(0, dotIdx);
+    const sig = code.slice(dotIdx + 1);
+    const expectedSig = createHmac("sha256", getAuthSecret())
+      .update(payloadB64)
+      .digest("base64url");
+    if (sig !== expectedSig) return false;
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
+    if (payload.exp < Date.now()) return false;
+    if (payload.redirectUri !== redirectUri) return false;
+    return true;
+  } catch {
     return false;
   }
-  AUTH_CODES.delete(code);
-  return true;
 }
+
+// ---------------------------------------------------------------------------
+// Stateless client registration — always succeeds
+// ---------------------------------------------------------------------------
 
 export function registerClient(redirectUris: string[]): { clientId: string; clientSecret: string } {
   const clientId = `mcp-client-${randomBytes(16).toString("hex")}`;
   const clientSecret = randomBytes(32).toString("hex");
-  REGISTERED_CLIENTS.set(clientId, { clientSecret, redirectUris });
   return { clientId, clientSecret };
 }
+
+// ---------------------------------------------------------------------------
+// OAuth server metadata (RFC 8414)
+// ---------------------------------------------------------------------------
 
 export function getServerMetadata(baseUrl: string) {
   return {

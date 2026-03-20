@@ -120,6 +120,12 @@ async function buildPropertyFromCms(
     const isContentArray = CONTENT_REF_TYPES.has(itemType);
 
     if (isContentArray) {
+      // allowedTypes can come from the property level or from items level
+      const allowed = cmsProp.allowedTypes?.length
+        ? cmsProp.allowedTypes
+        : cmsProp.items!.allowedTypes?.length
+          ? cmsProp.items!.allowedTypes
+          : undefined;
       return {
         prop: {
           key, label, type: "contentId[]", required,
@@ -127,7 +133,7 @@ async function buildPropertyFromCms(
           example: ["<content-id-1>", "<content-id-2>"],
           ...(cmsProp.minItems != null && { minItems: cmsProp.minItems }),
           ...(cmsProp.maxItems != null && { maxItems: cmsProp.maxItems }),
-          ...(cmsProp.allowedTypes && cmsProp.allowedTypes.length > 0 && { allowedTypes: cmsProp.allowedTypes }),
+          ...(allowed && { allowedTypes: allowed }),
         },
         isContentRef: true,
       };

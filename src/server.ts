@@ -12,7 +12,7 @@ export function createMcpServer() {
 
   server.tool(
     "create_page",
-    "Create a new page or content item in Optimizely CMS. Requires a content type, display name, and properties. Will validate against saved templates if one exists for the content type.",
+    "Create a new page or content item in Optimizely CMS. Requires a content type, display name, and properties. Will auto-introspect and validate against the content type schema — no need to call create_template first.",
     {
       contentType: createPageSchema.shape.contentType,
       name: createPageSchema.shape.name,
@@ -25,11 +25,12 @@ export function createMcpServer() {
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
       const clientSecret = process.env.OPTIMIZELY_CMS_CLIENT_SECRET;
+      const graphKey = process.env.OPTIMIZELY_GRAPH_KEY;
       if (!clientId || !clientSecret) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
       }
       try {
-        const result = await createPage(params, clientId, clientSecret);
+        const result = await createPage(params, clientId, clientSecret, graphKey);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -81,7 +82,7 @@ export function createMcpServer() {
 
   server.tool(
     "create_template",
-    "Create a flat, LLM-friendly template for a content type using the CMS content types API. Returns properties with accurate required flags, validation constraints (min/max items, string lengths), and example values ready for create_page. Use force=true to overwrite.",
+    "Create a flat, LLM-friendly template for a content type using the CMS content types API. Returns properties with accurate required flags, validation constraints (min/max items, string lengths, enums/picklists), and example values ready for create_page. Use force=true to overwrite.",
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,
       force: createTemplateSchema.shape.force,
