@@ -4,9 +4,25 @@ function getAuthSecret(): string {
   return process.env.MCP_AUTH_SECRET || "default-dev-secret-" + (process.env.OPTIMIZELY_CMS_CLIENT_ID || "local");
 }
 
-export function getBaseUrl(req: Request): string {
-  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
-  const proto = req.headers.get("x-forwarded-proto") || "https";
+export function getBaseUrl(req: unknown): string {
+  // Support both Web Request (headers.get) and Node.js IncomingMessage (headers object)
+  let host = "localhost:3000";
+  let proto = "https";
+
+  if (req && typeof req === "object" && "headers" in req) {
+    const h = (req as { headers: Record<string, string | string[] | undefined> }).headers;
+    if (typeof h.get === "function") {
+      // Web Request API
+      const webH = h as unknown as { get(name: string): string | null };
+      host = webH.get("x-forwarded-host") || webH.get("host") || host;
+      proto = webH.get("x-forwarded-proto") || proto;
+    } else {
+      // Node.js IncomingMessage headers
+      host = String(h["x-forwarded-host"] || h["host"] || host);
+      proto = String(h["x-forwarded-proto"] || proto);
+    }
+  }
+
   return `${proto}://${host}`;
 }
 

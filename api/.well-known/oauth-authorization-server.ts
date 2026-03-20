@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getServerMetadata, getBaseUrl } from "../../src/auth.js";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
-  const baseUrl = getBaseUrl(req as unknown as Request);
+  const baseUrl = getBaseUrl(req);
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
