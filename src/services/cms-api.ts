@@ -17,7 +17,11 @@ export async function getCmsToken(clientId: string, clientSecret: string): Promi
 
   const response = await fetch(`${CMS_API_BASE}/oauth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "mcp-optimizely-cms/1.0.0",
+      Accept: "application/json",
+    },
     body: params.toString(),
   });
 
@@ -39,6 +43,8 @@ async function cmsHeaders(clientId: string, clientSecret: string, extra?: Record
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
+    "User-Agent": "mcp-optimizely-cms/1.0.0",
+    Accept: "application/json",
     ...extra,
   };
 }
