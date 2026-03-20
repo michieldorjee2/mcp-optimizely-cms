@@ -3,49 +3,36 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createMcpServer } from "../src/server.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-// Session store for active transports
-const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: ReturnType<typeof createMcpServer> }>();
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-  // CORS headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, Mcp-Session-Id, MCP-Protocol-Version"
-  );
-  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    // CORS headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, Accept, Mcp-Session-Id, MCP-Protocol-Version"
+    );
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
 
-  if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
-
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-
-  if (req.method === "DELETE") {
-    if (sessionId && sessions.has(sessionId)) {
-      const { transport } = sessions.get(sessionId)!;
-      await transport.close();
-      sessions.delete(sessionId);
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
     }
-    return res.status(200).end();
-  }
 
-  if (req.method === "POST") {
-    if (!sessionId || !sessions.has(sessionId)) {
-      // New session — create transport and server
+    if (req.method === "DELETE") {
+      return res.status(200).end();
+    }
+
+    if (req.method === "GET") {
+      // SSE not supported in stateless serverless mode
+      return res.status(405).json({ error: "SSE not supported in stateless mode. Use POST." });
+    }
+
+    if (req.method === "POST") {
+      // Stateless: every POST gets a fresh transport and server
+      // This works on Vercel serverless where in-memory state doesn't persist
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-        onsessioninitialized: (newSessionId) => {
-          sessions.set(newSessionId, { transport, server });
-        },
+        sessionIdGenerator: undefined as unknown as (() => string),
       });
-
-      transport.onclose = () => {
-        const sid = [...sessions.entries()].find(([, s]) => s.transport === transport)?.[0];
-        if (sid) sessions.delete(sid);
-      };
 
       const server = createMcpServer();
       await server.connect(transport);
@@ -55,32 +42,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res as unknown as ServerResponse,
         req.body
       );
+
       return;
     }
 
-    // Existing session
-    const { transport } = sessions.get(sessionId)!;
-    await transport.handleRequest(
-      req as unknown as IncomingMessage,
-      res as unknown as ServerResponse,
-      req.body
-    );
-    return;
-  }
-
-  if (req.method === "GET") {
-    if (!sessionId || !sessions.has(sessionId)) {
-      return res.status(400).json({ error: "Missing or invalid session ID" });
-    }
-    const { transport } = sessions.get(sessionId)!;
-    await transport.handleRequest(
-      req as unknown as IncomingMessage,
-      res as unknown as ServerResponse
-    );
-    return;
-  }
-
-  return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ error: "Method not allowed" });
   } catch (err) {
     console.error("MCP handler error:", err);
     if (!res.headersSent) {
