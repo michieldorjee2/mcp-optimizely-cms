@@ -81,9 +81,10 @@ export function createMcpServer() {
 
   server.tool(
     "create_template",
-    "Create a template for a content type by introspecting its schema from Optimizely Graph. The template captures all fields, their types, and validation constraints for use with create_page.",
+    "Create a template for a content type by introspecting its schema from Optimizely Graph. The template captures all fields, their types, sub-fields for complex objects, allowed types for content areas, and URL formats. Use force=true to overwrite an existing template.",
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,
+      force: createTemplateSchema.shape.force,
     },
     async (params) => {
       const graphKey = process.env.OPTIMIZELY_GRAPH_KEY;
