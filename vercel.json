@@ -1,10 +1,10 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": "public",
+  "outputDirectory": ".",
   "rewrites": [
     {
       "source": "/.well-known/oauth-authorization-server",
-      "destination": "/api/.well-known/oauth-authorization-server"
+      "destination": "/api/oauth-metadata"
     },
     { "source": "/authorize", "destination": "/api/authorize" },
     { "source": "/token", "destination": "/api/token" },
