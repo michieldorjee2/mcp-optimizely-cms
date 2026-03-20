@@ -34,7 +34,7 @@ export async function createPage(
   }
 
   const body = {
-    contentType: [input.contentType],
+    contentType: input.contentType,
     displayName: input.name,
     locale: input.locale,
     status: input.status === "published" ? "Published" : "Draft",

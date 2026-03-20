@@ -1,7 +1,7 @@
 import type { CmsContentBody, CmsContentResponse, CmsTokenResponse } from "../types.js";
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
-const CMS_API_VERSION = "v0.4";
+const CMS_API_VERSION = "preview3/experimental";
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -17,11 +17,7 @@ export async function getCmsToken(clientId: string, clientSecret: string): Promi
 
   const response = await fetch(`${CMS_API_BASE}/oauth/token`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "mcp-optimizely-cms/1.0.0",
-      Accept: "application/json",
-    },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
   });
 
@@ -121,7 +117,7 @@ export async function listContentTypes(
   clientSecret: string
 ): Promise<unknown[]> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(`${CMS_API_BASE}/${CMS_API_VERSION}/contenttypes`, {
+  const response = await fetch(`${CMS_API_BASE}/preview3/contenttypes`, {
     method: "GET",
     headers,
   });

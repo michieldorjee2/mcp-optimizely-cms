@@ -38,7 +38,7 @@ export interface Template {
 export type TemplateField = TemplateProperty;
 
 export interface CmsContentBody {
-  contentType: string[];
+  contentType: string;
   displayName: string;
   locale: string;
   status?: string;
