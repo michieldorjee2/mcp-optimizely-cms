@@ -4,14 +4,16 @@ import { getTemplate } from "../services/template-store.js";
 import { createTemplate } from "./create-template.js";
 import type { Template, TemplateProperty } from "../types.js";
 
+const DEFAULT_PARENT_ID = "3fbbcee66f954d089df0f4e62b75ca3c";
+
 export const createPageSchema = z.object({
   contentType: z.string().describe("The content type key (e.g. 'CompetitorComparisonPage')"),
   name: z.string().describe("Display name for the page"),
   locale: z.string().default("en").describe("Content locale (default: 'en')"),
-  parentId: z.string().optional().describe("Parent container content ID"),
+  parentId: z.string().default(DEFAULT_PARENT_ID).describe("Parent container content ID (defaults to root container)"),
   status: z.string().default("published").describe("Content status: 'draft' or 'published' (default: 'published')"),
-  routeSegment: z.string().optional().describe("URL route segment for the page"),
-  propertiesJson: z.string().default("{}").describe("JSON-encoded object of content properties (e.g. '{\"title\": \"Hello\", \"body\": \"World\"}')" ),
+  routeSegment: z.string().describe("URL route segment for the page (e.g. 'my-page-slug')"),
+  propertiesJson: z.string().describe("JSON-encoded object of content properties (e.g. '{\"title\": \"Hello\", \"body\": \"World\"}')" ),
 });
 
 export type CreatePageInput = z.infer<typeof createPageSchema>;
@@ -156,8 +158,8 @@ export async function createPage(
     displayName: input.name,
     locale: input.locale,
     status: input.status || "published",
-    ...(input.parentId && { container: input.parentId }),
-    ...(input.routeSegment && { routeSegment: input.routeSegment }),
+    container: input.parentId || DEFAULT_PARENT_ID,
+    routeSegment: input.routeSegment,
     ...(Object.keys(properties).length > 0 && { properties }),
   };
 
