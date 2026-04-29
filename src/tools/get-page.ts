@@ -18,35 +18,37 @@ export const getPageSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Content ID (32-char hex). If provided, looks up directly without searching."
+      "Content ID (32-char hex). Direct lookup — fastest path, no Graph call. Use this when you already know the id (e.g. just created the page, or saved from a previous response). One of contentId / slug / search is required."
     ),
   slug: z
     .string()
     .optional()
     .describe(
-      "Page slug or URL route segment (e.g. '/amazon' or 'amazon'). Resolved via the Optimizely Graph."
+      "URL slug or route segment (e.g. '/amazon---aem' or 'amazon---aem'). Resolved via the Optimizely Graph against url.default with eq / endsWith / wildcard match. The slug is the path after the domain — lowercase, hyphenated. If you only have a friendly term like 'amazon', use search instead."
     ),
   search: z
     .string()
     .optional()
     .describe(
-      "Free-text search across page display names, route segments, and URLs. Returns multiple matches if more than one page matches."
+      "Free-text substring match across page display names and URLs (case-insensitive). Use this when you don't know the exact slug — e.g. search='amazon' finds the page at /amazon---aem. If multiple pages match, the response is { ambiguous: true, matches: [...] } so you can pick one and re-call with contentId."
     ),
   locale: z
     .string()
     .optional()
-    .describe("Locale to fetch (e.g. 'en'). Defaults to the latest available locale."),
+    .describe(
+      "Locale to read (e.g. 'en'). Defaults to the latest available locale across versions."
+    ),
   includeSchema: z
     .boolean()
     .default(true)
     .describe(
-      "If true, include the property schema (types, validation rules) alongside current values, so update_page calls can be built without extra round-trips. Default: true."
+      "If true (default), include the property schema (key, type, required, validation constraints) alongside the current values, so update_page can be planned in one round-trip. Set false if you only need the current values."
     ),
   verbose: z
     .boolean()
     .default(false)
     .describe(
-      "If true, include redundant schema fields (example values, English descriptions, labels, itemShape) for human inspection. Default: false — the lean schema keeps key/type/required + structured validation only, since the current property values already show the expected shape."
+      "If true, include redundant schema fields (example values, English descriptions, labels, itemShape) for human inspection. Default false keeps the response compact since the current property values already demonstrate the expected shape — saves ~30% tokens on large pages."
     ),
 });
 

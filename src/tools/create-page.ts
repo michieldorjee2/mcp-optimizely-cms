@@ -7,13 +7,44 @@ import type { Template, TemplateProperty } from "../types.js";
 const DEFAULT_PARENT_ID = "3fbbcee66f954d089df0f4e62b75ca3c";
 
 export const createPageSchema = z.object({
-  contentType: z.string().describe("The content type key (e.g. 'CompetitorComparisonPage')"),
-  name: z.string().describe("Display name for the page"),
-  locale: z.string().default("en").describe("Content locale (default: 'en')"),
-  parentId: z.string().default(DEFAULT_PARENT_ID).describe("Parent container content ID (defaults to root container)"),
-  status: z.string().default("published").describe("Content status: 'draft' or 'published' (default: 'published')"),
-  routeSegment: z.string().describe("URL route segment for the page (e.g. 'my-page-slug')"),
-  propertiesJson: z.string().describe("JSON-encoded object of content properties (e.g. '{\"title\": \"Hello\", \"body\": \"World\"}')" ),
+  contentType: z
+    .string()
+    .describe(
+      "The content type key — the name of the content model in Optimizely. Examples: 'CompetitorComparisonPage', 'ArticlePage', 'StandardPage'. Find available types via list_templates."
+    ),
+  name: z
+    .string()
+    .describe(
+      "Display name shown in the CMS UI and used as the default for the URL slug if routeSegment isn't passed. Example: 'Amazon vs Adobe Experience Manager'."
+    ),
+  locale: z
+    .string()
+    .default("en")
+    .describe(
+      "Content locale code. Common values: 'en', 'fr', 'de', 'es'. Defaults to 'en'."
+    ),
+  parentId: z
+    .string()
+    .default(DEFAULT_PARENT_ID)
+    .describe(
+      "Content ID (32-char hex) of the parent container — the folder/section the page lives under. Defaults to the site root container. To place under a different container, fetch its id with get_page."
+    ),
+  status: z
+    .string()
+    .default("published")
+    .describe(
+      "Initial status. 'published' (default) makes the page live immediately. 'draft' creates it without publishing — useful for staging before going live."
+    ),
+  routeSegment: z
+    .string()
+    .describe(
+      "URL slug — the last path segment of the page URL. Lowercase, hyphenated, no spaces or special characters. Example: 'amazon-vs-aem'. If you skip this, Optimizely auto-derives an unfriendly slug from the display name."
+    ),
+  propertiesJson: z
+    .string()
+    .describe(
+      "JSON-encoded object of property values. Each top-level key matches a field on the content type. Optimizely wraps primitive values in {\"value\": ...} and components/arrays-of-components in nested {\"value\": [...]} or {\"properties\": {...}} structures — call create_template or get_page on a similar page to see the exact expected shape. Example: '{\"headline\": {\"value\": \"Hello\"}, \"body\": {\"value\": \"World\"}}'."
+    ),
 });
 
 export type CreatePageInput = z.infer<typeof createPageSchema>;

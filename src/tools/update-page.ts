@@ -10,34 +10,40 @@ import {
 } from "../services/cms-api.js";
 
 export const updatePageSchema = z.object({
-  contentId: z.string().describe("The content ID of the page to update"),
+  contentId: z
+    .string()
+    .describe(
+      "Content ID of the page to update — 32-char hex. Get this from create_page's response, get_page (by slug or search), or saved from a previous call. Required."
+    ),
   locale: z
     .string()
     .optional()
-    .describe("Content locale to update (e.g. 'en'). Defaults to the existing content's locale."),
+    .describe(
+      "Content locale to target (e.g. 'en', 'fr'). Defaults to the locale of the existing version. Only pass this if the page has multiple locales and you want a non-default one."
+    ),
   displayName: z
     .string()
     .optional()
     .describe(
-      "New display name. Defaults to the existing version's display name (Optimizely requires one on every version)."
+      "New display name. If omitted, the existing displayName is preserved (Optimizely requires one on every version, so this tool auto-fills it from the latest published version). Pass a value here only when you want to rename the page."
     ),
   routeSegment: z
     .string()
     .optional()
     .describe(
-      "New URL route segment. If omitted, the existing slug is preserved (Optimizely otherwise auto-derives the slug from displayName on publish, which silently changes the URL — this tool re-pins the existing value after the version is created)."
+      "New URL slug. If omitted, the existing slug is preserved — important because Optimizely auto-derives the slug from displayName on publish, which would silently change the URL (e.g. 'Amazon - AEM' becomes '/amazon---aem'). This tool re-pins the slug after the version is created/published, so omitting routeSegment is safe."
     ),
   status: z
     .string()
     .default("published")
     .describe(
-      "Status after edit. Defaults to 'published' (the edit goes live). Pass 'draft' to leave the new version unpublished."
+      "Status after edit. 'published' (default) creates a new version and publishes it in one call. 'draft' creates the version but leaves it unpublished — useful for staging changes."
     ),
   propertiesJson: z
     .string()
     .default("{}")
     .describe(
-      "JSON-encoded object of properties to update. Only the properties you include are changed — untouched properties keep their current values. Example: '{\"title\": \"New Title\"}'"
+      "JSON-encoded object of property values to change. Only the keys you include are updated; everything else carries over from the existing version (deep merge). Use the same wrapped shape as create_page — primitive values as {\"value\": ...}, components as nested {\"properties\": {...}}. Run get_page first to see the current property shape and copy the structure. Example: '{\"headline\": {\"value\": \"New title\"}}'."
     ),
 });
 

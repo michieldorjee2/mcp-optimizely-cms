@@ -5,8 +5,18 @@ import { buildPropertiesFromContentType } from "../services/template-builder.js"
 import type { Template } from "../types.js";
 
 export const createTemplateSchema = z.object({
-  contentTypeName: z.string().describe("The name of a page/content type in Optimizely CMS (e.g. 'CompetitorComparisonPage')"),
-  force: z.boolean().optional().default(false).describe("If true, overwrite existing template"),
+  contentTypeName: z
+    .string()
+    .describe(
+      "Exact name of a content type in Optimizely CMS — case-sensitive. Examples: 'CompetitorComparisonPage', 'ArticlePage', 'StandardPage'. Find available types via list_templates (cached) or by inspecting the CMS UI's content models."
+    ),
+  force: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "If true, overwrite any existing cached template for this content type. Default false (returns the existing one). Use force=true after the content type changes in the CMS UI to refresh the cached schema."
+    ),
 });
 
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;

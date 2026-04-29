@@ -2,7 +2,12 @@ import { z } from "zod";
 import { listTemplates as listTemplatesFromStore } from "../services/template-store.js";
 
 export const listTemplatesSchema = z.object({
-  filter: z.string().optional().describe("Optional filter string to match template names"),
+  filter: z
+    .string()
+    .optional()
+    .describe(
+      "Case-insensitive substring to match against template names (= content type names). Example: filter='Page' returns 'CompetitorComparisonPage', 'StandardPage', 'ArticlePage'. Omit to list all cached templates."
+    ),
 });
 
 export type ListTemplatesInput = z.infer<typeof listTemplatesSchema>;

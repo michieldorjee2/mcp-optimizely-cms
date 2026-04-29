@@ -13,7 +13,19 @@ export function createMcpServer() {
 
   server.tool(
     "create_page",
-    "Create a new page or content item in Optimizely CMS. Requires a content type, display name, and propertiesJson (a JSON string). Will auto-introspect and validate against the content type schema — no need to call create_template first.",
+    [
+      "Create a NEW page or content item in Optimizely CMS.",
+      "",
+      "When to use:",
+      "- The page does not exist yet. To change an existing page, use update_page.",
+      "",
+      "What it does:",
+      "- Auto-introspects the content type's schema (no need to call create_template first).",
+      "- Validates propertiesJson against required fields, length and array bounds, enum values, and pattern constraints BEFORE calling Optimizely, so shape errors come back as a structured validation report instead of a raw API 400.",
+      "- Creates the page directly in published state by default; pass status='draft' to stage.",
+      "",
+      "Returns: { success, contentId, displayName, contentType, status }. Pass contentId to update_page or get_page next.",
+    ].join("\n"),
     {
       contentType: createPageSchema.shape.contentType,
       name: createPageSchema.shape.name,
@@ -41,7 +53,24 @@ export function createMcpServer() {
 
   server.tool(
     "update_page",
-    "Update an existing page or content item in Optimizely CMS. Fetches the current version for ETag concurrency, then applies a merge patch with the provided propertiesJson (a JSON string).",
+    [
+      "Update an EXISTING page in Optimizely CMS, optionally publishing the change in the same call.",
+      "",
+      "When to use:",
+      "- You already have a contentId (from create_page, get_page, or saved earlier) and want to change one or more property values, the displayName, the slug, or republish the page.",
+      "- For brand-new content, use create_page instead.",
+      "",
+      "What it does (single tool call, multiple API calls under the hood):",
+      "1. Reads the current routeSegment off the content wrapper so the slug can be re-pinned at the end (Optimizely otherwise auto-derives the slug from displayName on publish, silently changing the URL — this tool prevents that drift).",
+      "2. Finds the latest published version (or any version if none are published).",
+      "3. Forks a new version, with the caller's property overrides merged into the current property set — keys you don't pass keep their existing values.",
+      "4. Publishes the new version unless status='draft' was passed.",
+      "5. Re-pins routeSegment back to the desired value (caller's override or the prior slug).",
+      "",
+      "On error, the response includes the failed stage, the parsed Optimizely error, the attempted overrides, and the current properties — so a shape mismatch on a single field (e.g. an `analystCards` component) is debuggable in one glance.",
+      "",
+      "Returns: { success, contentId, baseVersionId, versionId, status, published, routeSegment, routeSegmentRepinned, updatedFields, ... }.",
+    ].join("\n"),
     {
       contentId: updatePageSchema.shape.contentId,
       locale: updatePageSchema.shape.locale,
@@ -67,7 +96,23 @@ export function createMcpServer() {
 
   server.tool(
     "get_page",
-    "Look up a page in Optimizely CMS by contentId, slug (URL route), or free-text search, and return its current values + property schema. Use this before update_page to see what fields exist, what shape they expect, and what they currently hold — so updates can be built in a single round-trip without separate Graph queries.",
+    [
+      "Look up a page in Optimizely CMS and return its current values + property schema in one call.",
+      "",
+      "When to use:",
+      "- Before calling update_page, to see what fields exist, what shape each expects, and what each currently holds — so the update can be planned without extra Graph round-trips.",
+      "- To resolve a contentId from a human-friendly slug or display-name search.",
+      "- To inspect a page's current state without making changes.",
+      "",
+      "Resolution priority: contentId > slug > search.",
+      "- contentId: direct fetch, no Graph call.",
+      "- slug: Graph lookup against url.default with eq / endsWith / like wildcards.",
+      "- search: Graph substring match across displayName + URL.",
+      "",
+      "If a slug/search resolves to multiple pages, returns { ambiguous: true, matches: [...] } so the caller can pick one and re-call with contentId.",
+      "",
+      "Response is compact JSON (no pretty-print) with a lean schema by default — see the verbose flag if you want the full template-style schema with examples and descriptions.",
+    ].join("\n"),
     {
       contentId: getPageSchema.shape.contentId,
       slug: getPageSchema.shape.slug,
@@ -97,7 +142,17 @@ export function createMcpServer() {
 
   server.tool(
     "list_templates",
-    "List all saved content type templates. Each template has a flat list of properties with keys, types, examples, and whether they're required. Use this before create_page to see what properties a content type needs.",
+    [
+      "List cached content-type templates — flat per-type schemas built from the CMS Content Types API + Graph introspection.",
+      "",
+      "When to use:",
+      "- Before create_page, to see what content types are available and what properties each needs.",
+      "- To check whether a template is already cached before forcing a fresh create_template.",
+      "",
+      "Each template entry includes: name, contentType, propertyCount, properties (array of { key, label, type, required, description, example, validation constraints, itemShape for object arrays, allowedTypes for content references }), contentReferences (which fields need separate content IDs to point at), and createdAt.",
+      "",
+      "Note: get_page on a specific page returns the same schema shape inline alongside the page's current values — use that for a per-page workflow. list_templates is for surveying content types globally.",
+    ].join("\n"),
     {
       filter: listTemplatesSchema.shape.filter,
     },
@@ -113,7 +168,20 @@ export function createMcpServer() {
 
   server.tool(
     "create_template",
-    "Create a flat, LLM-friendly template for a content type using the CMS content types API. Returns properties with accurate required flags, validation constraints (min/max items, string lengths), and example values ready for create_page. Use force=true to overwrite.",
+    [
+      "Build a flat, LLM-friendly template for a single content type and cache it in the template store.",
+      "",
+      "When to use:",
+      "- Rarely needed — create_page auto-introspects on demand. Use this when you want to inspect a content type's schema without creating a page, or pre-warm the cache.",
+      "- Pass force=true to refresh after a content-type change in the CMS UI.",
+      "",
+      "What it does:",
+      "- Pulls the content type definition from the CMS REST API (validation rules: required, min/max length, min/max items, patterns, enums, allowed content types).",
+      "- For object/component sub-types, introspects via Graph to surface the inner field shape.",
+      "- Saves the result keyed by content type name; list_templates shows what's cached.",
+      "",
+      "Returns: { success, template: { name, contentType, propertyCount, properties, contentReferences, createdAt } }.",
+    ].join("\n"),
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,
       force: createTemplateSchema.shape.force,
