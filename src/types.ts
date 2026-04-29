@@ -100,6 +100,13 @@ export interface CmsContentResponse {
   contentType: string[];
   locale: string;
   status: string;
+  /**
+   * URL slug. Lives on the content wrapper. Note: Optimizely auto-derives
+   * this from displayName when a new version is published if it isn't
+   * explicitly pinned, so update_page re-asserts it after the publish to
+   * avoid silent drift (e.g. "Amazon - AEM" → "amazon---aem").
+   */
+  routeSegment?: string;
   properties?: Record<string, unknown>;
   _metadata?: {
     version?: string;

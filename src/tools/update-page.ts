@@ -21,7 +21,12 @@ export const updatePageSchema = z.object({
     .describe(
       "New display name. Defaults to the existing version's display name (Optimizely requires one on every version)."
     ),
-  routeSegment: z.string().optional().describe("New URL route segment"),
+  routeSegment: z
+    .string()
+    .optional()
+    .describe(
+      "New URL route segment. If omitted, the existing slug is preserved (Optimizely otherwise auto-derives the slug from displayName on publish, which silently changes the URL — this tool re-pins the existing value after the version is created)."
+    ),
   status: z
     .string()
     .default("published")
@@ -85,29 +90,28 @@ export async function updatePage(
   const wantsPublish = input.status.toLowerCase() === "published";
 
   // ---------------------------------------------------------------------
-  // 1. Update content-level metadata (routeSegment) on the bare content
-  //    endpoint. This lives on the content wrapper, not on a version.
+  // 1. Fetch content-level metadata. We need its current `routeSegment`
+  //    so we can re-pin it after the version flow — Optimizely auto-
+  //    derives the slug from displayName on publish if it's not held in
+  //    place. This is the actual "update_page silently changed the URL"
+  //    bug.
   // ---------------------------------------------------------------------
-  if (input.routeSegment) {
-    try {
-      const { etag } = await getContent(clientId, clientSecret, input.contentId);
-      await updateContent(
-        clientId,
-        clientSecret,
-        input.contentId,
-        { routeSegment: input.routeSegment },
-        etag
-      );
-    } catch (e) {
-      const parsed = parseApiError(e);
-      return {
-        success: false,
-        stage: "update-route-segment",
-        error: parsed.message,
-        apiError: parsed.apiError,
-      };
-    }
+  let existingMeta;
+  try {
+    existingMeta = (await getContent(clientId, clientSecret, input.contentId)).data;
+  } catch (e) {
+    const parsed = parseApiError(e);
+    return {
+      success: false,
+      stage: "get-content",
+      error: parsed.message,
+      apiError: parsed.apiError,
+      hint: "Could not fetch the existing content. Check that contentId is correct.",
+    };
   }
+
+  // The slug we want the live URL to have when this call finishes.
+  const desiredRouteSegment = input.routeSegment ?? existingMeta.routeSegment;
 
   // ---------------------------------------------------------------------
   // 2. Find the latest published version. Version-level data — displayName,
@@ -270,6 +274,42 @@ export async function updatePage(
     }
   }
 
+  // ---------------------------------------------------------------------
+  // 7. Re-pin the routeSegment.
+  //
+  // Optimizely auto-derives the slug from displayName when a new version
+  // is created/published, which silently changes the URL (e.g.
+  // "Amazon - AEM" → "amazon---aem"). To prevent this, fetch the current
+  // content metadata and PATCH the routeSegment back to the value we
+  // want — either the caller's explicit override, or the existing value
+  // from before this call started.
+  //
+  // This runs whether or not we published, because creating a draft
+  // version can also leak the auto-derived slug onto the content wrapper.
+  // It's a best-effort step: a failure here doesn't fail the whole update.
+  // ---------------------------------------------------------------------
+  let finalRouteSegment = desiredRouteSegment;
+  let routeSegmentRepinned = false;
+  let routeSegmentRepinError: string | undefined;
+  if (desiredRouteSegment) {
+    try {
+      const { data: latest, etag } = await getContent(clientId, clientSecret, input.contentId);
+      if (latest.routeSegment !== desiredRouteSegment) {
+        await updateContent(
+          clientId,
+          clientSecret,
+          input.contentId,
+          { routeSegment: desiredRouteSegment },
+          etag
+        );
+        routeSegmentRepinned = true;
+      }
+      finalRouteSegment = desiredRouteSegment;
+    } catch (e) {
+      routeSegmentRepinError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   return {
     success: true,
     contentId: input.contentId,
@@ -279,6 +319,9 @@ export async function updatePage(
     contentType: created.contentType,
     status: finalStatus,
     published: finalStatus.toLowerCase() === "published",
+    routeSegment: finalRouteSegment,
+    routeSegmentRepinned,
+    ...(routeSegmentRepinError ? { routeSegmentRepinError } : {}),
     updatedFields: Object.keys(overrides),
   };
 }
