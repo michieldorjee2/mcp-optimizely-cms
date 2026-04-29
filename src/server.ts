@@ -74,6 +74,7 @@ export function createMcpServer() {
       search: getPageSchema.shape.search,
       locale: getPageSchema.shape.locale,
       includeSchema: getPageSchema.shape.includeSchema,
+      verbose: getPageSchema.shape.verbose,
     },
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
@@ -84,7 +85,10 @@ export function createMcpServer() {
       }
       try {
         const result = await getPage(params, clientId, clientSecret, graphKey);
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+        // Compact JSON (no pretty-print): saves ~25-35% tokens on large
+        // page payloads compared to JSON.stringify(result, null, 2). The
+        // agent reads it just fine.
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
       }

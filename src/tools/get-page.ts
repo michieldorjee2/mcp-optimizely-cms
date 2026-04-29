@@ -40,7 +40,13 @@ export const getPageSchema = z.object({
     .boolean()
     .default(true)
     .describe(
-      "If true, include the property schema (types, validation rules, examples) alongside current values, so update_page calls can be built without extra round-trips. Default: true."
+      "If true, include the property schema (types, validation rules) alongside current values, so update_page calls can be built without extra round-trips. Default: true."
+    ),
+  verbose: z
+    .boolean()
+    .default(false)
+    .describe(
+      "If true, include redundant schema fields (example values, English descriptions, labels, itemShape) for human inspection. Default: false — the lean schema keeps key/type/required + structured validation only, since the current property values already show the expected shape."
     ),
 });
 
@@ -235,13 +241,26 @@ export async function getPage(
     ? version.contentType[version.contentType.length - 1]
     : (version.contentType as unknown as string | undefined);
 
-  let schema: { properties: ReturnType<typeof Object>[]; contentReferences: string[] } | undefined;
+  let schema: { properties: unknown[]; contentReferences: string[] } | undefined;
   if (input.includeSchema && graphKey && contentTypeName) {
     try {
       const ct = await getContentType(clientId, clientSecret, contentTypeName);
       const built = await buildPropertiesFromContentType(ct, graphKey);
+
+      // Lean view: drop the fields that duplicate information already
+      // visible in the current property values (example, itemShape) or in
+      // structured fields right next to them (label, description). The
+      // agent can read the actual shape from `properties` and the validation
+      // rules from `required` / `min*` / `max*` / `pattern` / `enumValues`.
+      const properties = input.verbose
+        ? built.properties
+        : built.properties.map((p) => {
+            const { label: _label, description: _desc, example: _ex, itemShape: _is, ...rest } = p;
+            return rest;
+          });
+
       schema = {
-        properties: built.properties as unknown as ReturnType<typeof Object>[],
+        properties,
         contentReferences: built.contentReferences,
       };
     } catch {
