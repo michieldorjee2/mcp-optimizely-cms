@@ -267,6 +267,8 @@ async function runContentQuery(
   graphKey: string,
   whereClause: string
 ): Promise<GraphContentMatch[]> {
+  // routeSegment lives on IInstanceMetadata (not the base IContentMetadata),
+  // so we read it via an inline fragment instead of as a top-level field.
   const query = `{
     _Content(where: ${whereClause}, limit: 25) {
       items {
@@ -275,8 +277,8 @@ async function runContentQuery(
           displayName
           types
           locale
-          routeSegment
           url { default hierarchical }
+          ... on IInstanceMetadata { routeSegment }
         }
       }
     }
@@ -315,17 +317,18 @@ async function runContentQuery(
     .filter((m): m is GraphContentMatch => m !== null);
 }
 
-/** Try to find content whose URL or routeSegment matches the given slug. */
+/** Try to find content whose URL matches the given slug. */
 export async function findContentByRoute(
   graphKey: string,
   slug: string
 ): Promise<GraphContentMatch[]> {
-  // Normalize: search for matches both with and without leading slash.
   const stripped = slug.startsWith("/") ? slug : `/${slug}`;
+  // routeSegment lives on IInstanceMetadata only, so it can't appear in a
+  // top-level where on _Content. Match on url.default with both exact
+  // equality and suffix.
   const where = `{ _or: [
     { _metadata: { url: { default: { eq: "${stripped}" } } } }
     { _metadata: { url: { default: { endsWith: "${stripped}" } } } }
-    { _metadata: { routeSegment: { eq: "${slug.replace(/^\//, "")}" } } }
   ] }`;
   return runContentQuery(graphKey, where);
 }
@@ -338,7 +341,6 @@ export async function searchContent(
   const where = `{ _or: [
     { _metadata: { displayName: { contains: "${term}" } } }
     { _metadata: { url: { default: { contains: "${term}" } } } }
-    { _metadata: { routeSegment: { contains: "${term}" } } }
   ] }`;
   return runContentQuery(graphKey, where);
 }
