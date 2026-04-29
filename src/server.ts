@@ -53,6 +53,7 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
       status: createPageSchema.shape.status,
       routeSegment: createPageSchema.shape.routeSegment,
       propertiesJson: createPageSchema.shape.propertiesJson,
+      idempotencyKey: createPageSchema.shape.idempotencyKey,
     },
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;

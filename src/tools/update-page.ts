@@ -10,6 +10,7 @@ import {
   type CmsVersionSummary,
 } from "../services/cms-api.js";
 import { errorToResponse } from "../services/errors.js";
+import { stableHash } from "../services/hash.js";
 
 export const updatePageSchema = z.object({
   contentId: z
@@ -213,6 +214,51 @@ export async function updatePage(
       error:
         "Could not determine displayName for the new version. The base version did not include one and the caller did not provide one.",
       base,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // 4a. No-op short-circuit. Hash the desired payload and compare to the
+  //     latest base version. If they're identical, skip version creation
+  //     entirely — saves an API call, avoids cluttering the version list
+  //     with no-change drafts, and makes update_page replay-safe.
+  //
+  //     We only short-circuit when the caller didn't ask for a publish
+  //     transition (status: "draft") AND the base is already published —
+  //     re-publishing an already-published version is a meaningful action
+  //     even if the content is unchanged, and we shouldn't suppress it.
+  // ---------------------------------------------------------------------
+  const desiredPayload = {
+    displayName,
+    locale,
+    routeSegment: desiredRouteSegment,
+    properties: mergedProperties,
+  };
+  const basePayload = {
+    displayName: base.displayName,
+    locale: base.locale,
+    routeSegment: base.routeSegment ?? existingMeta.routeSegment,
+    properties: base.properties ?? {},
+  };
+  const desiredHash = stableHash(desiredPayload);
+  const baseHash = stableHash(basePayload);
+  const baseIsPublished = base.status?.toLowerCase() === "published";
+
+  if (desiredHash === baseHash && (!wantsPublish || baseIsPublished)) {
+    return {
+      success: true,
+      noop: true,
+      contentId: input.contentId,
+      versionId: baseVersionId,
+      baseVersionId,
+      displayName: base.displayName,
+      contentType: base.contentType,
+      status: base.status ?? "published",
+      published: baseIsPublished,
+      routeSegment: basePayload.routeSegment,
+      message:
+        "No changes detected — desired payload hash matches the latest version. Skipped creating a new version.",
+      updatedFields: [],
     };
   }
 

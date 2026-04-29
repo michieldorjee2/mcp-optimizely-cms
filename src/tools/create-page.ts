@@ -2,6 +2,9 @@ import { z } from "zod";
 import { createContent } from "../services/cms-api.js";
 import { getTemplate } from "../services/template-store.js";
 import { createTemplate } from "./create-template.js";
+import { hasRedis } from "../services/env.js";
+import { stableHash } from "../services/hash.js";
+import { log } from "../services/log.js";
 import type { Template, TemplateProperty } from "../types.js";
 
 const DEFAULT_PARENT_ID = "3fbbcee66f954d089df0f4e62b75ca3c";
@@ -44,6 +47,12 @@ export const createPageSchema = z.object({
     .string()
     .describe(
       "JSON-encoded object of property values. Each top-level key matches a field on the content type. Optimizely wraps primitive values in {\"value\": ...} and components/arrays-of-components in nested {\"value\": [...]} or {\"properties\": {...}} structures — call create_template or get_page on a similar page to see the exact expected shape. Example: '{\"headline\": {\"value\": \"Hello\"}, \"body\": {\"value\": \"World\"}}'."
+    ),
+  idempotencyKey: z
+    .string()
+    .optional()
+    .describe(
+      "Optional unique key to make this create_page call replay-safe. If you retry with the same key (within 24h), the same contentId is returned without creating a duplicate page. Recommended for any retryable workflow — e.g. an agent loop that may re-invoke after a network blip. Use any stable string: a UUID, a content hash, or the page's intended slug + locale."
     ),
 });
 
@@ -135,6 +144,67 @@ function validateProperties(
 }
 
 // ---------------------------------------------------------------------------
+// Idempotency helpers — store the contentId of a successful create_page
+// keyed by (idempotencyKey, hash-of-args) so retries return the same id
+// instead of creating duplicates. 24h TTL.
+// ---------------------------------------------------------------------------
+
+interface IdempotentResult {
+  contentId: string;
+  displayName?: string;
+  contentType?: string[];
+  status?: string;
+  ts: string;
+}
+
+const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
+
+function idempotencyCacheKey(callerKey: string, argsHash: string): string {
+  return `create_page:idem:${callerKey}:${argsHash}`;
+}
+
+async function readIdempotent(callerKey: string, argsHash: string): Promise<IdempotentResult | null> {
+  if (!hasRedis()) return null;
+  try {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.KV_REST_API_URL!,
+      token: process.env.KV_REST_API_TOKEN!,
+    });
+    const raw = await redis.get<IdempotentResult | string>(idempotencyCacheKey(callerKey, argsHash));
+    if (!raw) return null;
+    return typeof raw === "string" ? (JSON.parse(raw) as IdempotentResult) : (raw as IdempotentResult);
+  } catch (e) {
+    log.warn("create_page.idempotency_read_failed", {
+      error: { message: e instanceof Error ? e.message : String(e) },
+    });
+    return null;
+  }
+}
+
+async function writeIdempotent(
+  callerKey: string,
+  argsHash: string,
+  result: IdempotentResult
+): Promise<void> {
+  if (!hasRedis()) return;
+  try {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.KV_REST_API_URL!,
+      token: process.env.KV_REST_API_TOKEN!,
+    });
+    await redis.set(idempotencyCacheKey(callerKey, argsHash), JSON.stringify(result), {
+      ex: IDEMPOTENCY_TTL_SECONDS,
+    });
+  } catch (e) {
+    log.warn("create_page.idempotency_write_failed", {
+      error: { message: e instanceof Error ? e.message : String(e) },
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main create_page handler
 // ---------------------------------------------------------------------------
 
@@ -150,6 +220,33 @@ export async function createPage(
     properties = JSON.parse(input.propertiesJson || "{}");
   } catch {
     return { success: false, error: "Invalid JSON in propertiesJson. Must be a valid JSON object." };
+  }
+
+  // Idempotency check: if the caller passed an idempotencyKey AND the same
+  // (key, args-hash) pair was used recently, return the cached contentId
+  // instead of creating a duplicate page.
+  const argsHashForIdempotency = stableHash({
+    contentType: input.contentType,
+    name: input.name,
+    locale: input.locale,
+    parentId: input.parentId,
+    status: input.status,
+    routeSegment: input.routeSegment,
+    properties,
+  });
+  if (input.idempotencyKey) {
+    const cached = await readIdempotent(input.idempotencyKey, argsHashForIdempotency);
+    if (cached) {
+      return {
+        success: true,
+        idempotent: true,
+        contentId: cached.contentId,
+        displayName: cached.displayName,
+        contentType: cached.contentType,
+        status: cached.status,
+        message: `Returned cached result for idempotencyKey '${input.idempotencyKey}' (created at ${cached.ts}).`,
+      };
+    }
   }
 
   // Try to load existing template, or auto-create one from CMS content type API
@@ -195,6 +292,18 @@ export async function createPage(
   };
 
   const result = await createContent(clientId, clientSecret, body);
+
+  // Stash the successful result for idempotent replay.
+  if (input.idempotencyKey) {
+    await writeIdempotent(input.idempotencyKey, argsHashForIdempotency, {
+      contentId: result.key,
+      displayName: result.displayName,
+      contentType: result.contentType,
+      status: result.status,
+      ts: new Date().toISOString(),
+    });
+  }
+
   return {
     success: true,
     contentId: result.key,
