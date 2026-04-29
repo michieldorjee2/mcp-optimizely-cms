@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getContentType } from "../services/cms-api.js";
 import { saveTemplate, getTemplate, deleteTemplate } from "../services/template-store.js";
 import { buildPropertiesFromContentType } from "../services/template-builder.js";
+import { stableHash } from "../services/hash.js";
 import type { Template } from "../types.js";
 
 export const createTemplateSchema = z.object({
@@ -58,12 +59,18 @@ export async function createTemplate(
     graphKey
   );
 
+  // Hash the content-type definition itself (not our derived template) so
+  // drift detection compares apples to apples — a future fetch hashes the
+  // raw response from CMS and compares to this value.
+  const schemaHash = stableHash(contentType.properties ?? {});
+
   const template: Template = {
     name: input.contentTypeName,
     contentType: input.contentTypeName,
     properties,
     contentReferences,
     createdAt: new Date().toISOString(),
+    schemaHash,
   };
 
   await saveTemplate(template);

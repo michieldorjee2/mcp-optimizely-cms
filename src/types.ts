@@ -79,6 +79,14 @@ export interface Template {
   /** Fields that require references to existing content (can't be created inline) */
   contentReferences: string[];
   createdAt: string;
+  /**
+   * SHA-256 hash of the underlying CMS content-type definition at the time
+   * this template was built. Used for drift detection — if the live content
+   * type's hash differs from this, the template is stale and validation
+   * may lie about required fields or constraints. Optional for backward
+   * compat with templates created before this field existed.
+   */
+  schemaHash?: string;
 }
 
 // Keep old TemplateField as alias for backward compat in create-page validation

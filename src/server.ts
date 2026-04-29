@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createPageSchema, createPage } from "./tools/create-page.js";
 import { updatePageSchema, updatePage } from "./tools/update-page.js";
 import { listTemplatesSchema, listTemplatesHandler } from "./tools/list-templates.js";
@@ -332,6 +332,159 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
       }
     }
+  );
+
+  // ---------------------------------------------------------------------
+  // MCP resources
+  //
+  // Resources let clients enumerate readable content without invoking a
+  // tool — discoverable, paginated, cacheable. Saves round-trips for
+  // anything that's "list and inspect" rather than "act".
+  //
+  // We expose:
+  //   optimizely://templates         → list of cached content-type templates
+  //   optimizely://templates/{name}  → one template's full schema
+  //
+  // Pages aren't resources because there can be thousands of them and
+  // listing all is wasteful — get_page handles that lookup-style access.
+  // ---------------------------------------------------------------------
+
+  server.resource(
+    "templates-index",
+    "optimizely://templates",
+    {
+      description:
+        "List of every Optimizely content type whose schema has been cached. Read this to discover what types are available without invoking list_page_templates.",
+      mimeType: "application/json",
+    },
+    async () => {
+      const { listTemplates } = await import("./services/template-store.js");
+      const templates = await listTemplates();
+      return {
+        contents: [
+          {
+            uri: "optimizely://templates",
+            mimeType: "application/json",
+            text: JSON.stringify(
+              templates.map((t) => ({
+                name: t.name,
+                contentType: t.contentType,
+                propertyCount: t.properties.length,
+                createdAt: t.createdAt,
+              })),
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  // Per-template resource template — clients enumerate via the index above
+  // and resolve URIs of the form optimizely://templates/{name}. The
+  // ResourceTemplate handles URI parsing and passes the resolved variable
+  // to the read callback.
+  server.resource(
+    "template-detail",
+    new ResourceTemplate("optimizely://templates/{name}", { list: undefined }),
+    {
+      description:
+        "Full schema for one content type. URI: optimizely://templates/{name} where {name} matches the contentType key (e.g. 'CompetitorComparisonPage').",
+      mimeType: "application/json",
+    },
+    async (uri, variables) => {
+      const rawName = variables.name;
+      const name = Array.isArray(rawName) ? rawName[0] : rawName;
+      if (!name) {
+        return {
+          contents: [
+            {
+              uri: uri.toString(),
+              mimeType: "application/json",
+              text: JSON.stringify({ error: "Invalid template URI — missing {name}." }),
+            },
+          ],
+        };
+      }
+      const { getTemplate } = await import("./services/template-store.js");
+      const template = await getTemplate(decodeURIComponent(name));
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: template
+              ? JSON.stringify(template, null, 2)
+              : JSON.stringify({ error: `Template '${name}' not found. Run create_template first.` }),
+          },
+        ],
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------
+  // MCP prompts — pre-canned conversational templates clients can offer
+  // as slash-commands or quick-actions. Each takes structured args; the
+  // returned messages guide the agent to follow the right tool sequence
+  // without re-deriving the workflow from scratch.
+  // ---------------------------------------------------------------------
+
+  server.prompt(
+    "edit_page_section",
+    "Update one section of an existing Optimizely page — guides the agent to fetch the current shape with get_page, then call update_page with the right wrapping.",
+    {
+      slug: getPageSchema.shape.slug as never,
+      field: getPageSchema.shape.search as never,
+    },
+    (args) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              `I want to edit the ${args.field ?? "<field>"} on the page at slug '${args.slug ?? "<slug>"}'.`,
+              "",
+              "Please:",
+              "1. Call get_page with the slug to fetch the current values + property schema.",
+              "2. Inspect the existing value of the target field in `properties` so you copy the exact wrapping shape (Optimizely components are nested {value: …} or {properties: {…}}).",
+              "3. Build the new value in the same shape and call update_page with propertiesJson containing only that one field. Leave status default ('published') unless I ask for a draft.",
+              "4. Confirm the change by reporting back the new versionId and routeSegment.",
+            ].join("\n"),
+          },
+        },
+      ],
+    })
+  );
+
+  server.prompt(
+    "create_competitor_page",
+    "Create a new competitor-comparison page from a brand domain — coordinates get_brand → create_page with sensible defaults.",
+    {
+      brand_domain: getBrandSchema.shape.domain as never,
+      competitor_name: createPageSchema.shape.name as never,
+    },
+    (args) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              `Create a new CompetitorComparisonPage comparing Optimizely against ${args.competitor_name ?? "<competitor>"}, branded for ${args.brand_domain ?? "<brand domain>"}.`,
+              "",
+              "Steps:",
+              "1. Call get_brand for the brand domain to grab the customer's logo URL, accent color, and font.",
+              "2. Call list_page_templates (filter='CompetitorComparisonPage') to get the property schema.",
+              "3. Build propertiesJson using example values from the template, populated with brand-appropriate copy and the customer's actual values.",
+              "4. Call create_page with status='published' and an idempotencyKey of `competitor-${brand_domain}-${competitor_name}` to make the create replay-safe.",
+              "5. Report back the contentId and the live URL.",
+            ].join("\n"),
+          },
+        },
+      ],
+    })
   );
 
   return server;
