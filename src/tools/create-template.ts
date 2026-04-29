@@ -8,7 +8,7 @@ export const createTemplateSchema = z.object({
   contentTypeName: z
     .string()
     .describe(
-      "Exact name of a content type in Optimizely CMS — case-sensitive. Examples: 'CompetitorComparisonPage', 'ArticlePage', 'StandardPage'. Find available types via list_templates (cached) or by inspecting the CMS UI's content models."
+      "Exact name of a content type in Optimizely CMS — case-sensitive. Examples: 'CompetitorComparisonPage', 'ArticlePage', 'StandardPage'. Find available types via list_page_templates (cached) or by inspecting the CMS UI's content models."
     ),
   force: z
     .boolean()

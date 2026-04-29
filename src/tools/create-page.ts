@@ -10,7 +10,7 @@ export const createPageSchema = z.object({
   contentType: z
     .string()
     .describe(
-      "The content type key — the name of the content model in Optimizely. Examples: 'CompetitorComparisonPage', 'ArticlePage', 'StandardPage'. Find available types via list_templates."
+      "The content type key — the name of the content model in Optimizely. Examples: 'CompetitorComparisonPage', 'ArticlePage', 'StandardPage'. Find available types via list_page_templates."
     ),
   name: z
     .string()

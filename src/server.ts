@@ -150,9 +150,11 @@ export function createMcpServer() {
   );
 
   server.tool(
-    "list_templates",
+    "list_page_templates",
     [
-      "List cached content-type templates — flat per-type schemas built from the CMS Content Types API + Graph introspection.",
+      "List cached Optimizely CMS content-type templates — flat per-type schemas built from the CMS Content Types API + Graph introspection.",
+      "",
+      "(Renamed from list_templates to avoid collision with another tool of the same name in the host environment's registry.)",
       "",
       "When to use:",
       "- Before create_page, to see what content types are available and what properties each needs.",
@@ -160,7 +162,7 @@ export function createMcpServer() {
       "",
       "Each template entry includes: name, contentType, propertyCount, properties (array of { key, label, type, required, description, example, validation constraints, itemShape for object arrays, allowedTypes for content references }), contentReferences (which fields need separate content IDs to point at), and createdAt.",
       "",
-      "Note: get_page on a specific page returns the same schema shape inline alongside the page's current values — use that for a per-page workflow. list_templates is for surveying content types globally.",
+      "Note: get_page on a specific page returns the same schema shape inline alongside the page's current values — use that for a per-page workflow. list_page_templates is for surveying content types globally.",
     ].join("\n"),
     {
       filter: listTemplatesSchema.shape.filter,
@@ -187,7 +189,7 @@ export function createMcpServer() {
       "What it does:",
       "- Pulls the content type definition from the CMS REST API (validation rules: required, min/max length, min/max items, patterns, enums, allowed content types).",
       "- For object/component sub-types, introspects via Graph to surface the inner field shape.",
-      "- Saves the result keyed by content type name; list_templates shows what's cached.",
+      "- Saves the result keyed by content type name; list_page_templates shows what's cached.",
       "",
       "Returns: { success, template: { name, contentType, propertyCount, properties, contentReferences, createdAt } }.",
     ].join("\n"),
