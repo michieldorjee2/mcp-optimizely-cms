@@ -10,3 +10,4 @@ dist/
 !tsconfig.json
 !package.json
 .vercel
+.claude/settings.local.json
