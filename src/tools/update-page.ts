@@ -355,15 +355,6 @@ export async function updatePage(
     routeSegment: finalRouteSegment,
     routeSegmentRepinned,
     ...(routeSegmentRepinError ? { routeSegmentRepinError } : {}),
-    // Diagnostic: where did we resolve routeSegment from? Helps debug when
-    // the slug still drifts despite the re-pin.
-    _routeSegmentDebug: {
-      fromInput: input.routeSegment,
-      fromContentMeta: existingMeta.routeSegment,
-      fromBaseVersion: base.routeSegment,
-      fromCreatedVersion: created.routeSegment,
-      desired: desiredRouteSegment,
-    },
     updatedFields: Object.keys(overrides),
   };
 }
