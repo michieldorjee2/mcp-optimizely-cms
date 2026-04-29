@@ -17,9 +17,9 @@ export const updatePageSchema = z.object({
   routeSegment: z.string().optional().describe("New URL route segment"),
   status: z
     .string()
-    .optional()
+    .default("published")
     .describe(
-      "Set to 'published' to publish the edited version. Omit to leave changes as a draft."
+      "Status after edit. Defaults to 'published' (the edit goes live). Pass 'draft' to leave the edited version as a draft instead."
     ),
   propertiesJson: z
     .string()
