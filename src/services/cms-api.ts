@@ -162,6 +162,17 @@ export async function listVersions(
   return data.items ?? [];
 }
 
+/**
+ * Pull a version id out of a Location header like
+ *   /v1/content/{key}/versions/1253
+ * or the full URL form. Returns undefined if no match.
+ */
+function versionIdFromLocation(location: string | null): string | undefined {
+  if (!location) return undefined;
+  const match = location.match(/\/versions\/([^/?#]+)/);
+  return match ? match[1] : undefined;
+}
+
 export async function createVersion(
   clientId: string,
   clientSecret: string,
@@ -179,7 +190,38 @@ export async function createVersion(
     throw new Error(`Create version failed (${response.status}): ${text}`);
   }
 
-  return (await response.json()) as CmsVersionSummary;
+  // Optimizely returns 201 Created with Location: /v1/content/{key}/versions/{id}
+  // and may return no body, or a body with the new version. Read once as text
+  // and JSON-parse only if there's content.
+  const text = await response.text();
+  const locationVersion = versionIdFromLocation(response.headers.get("location"));
+
+  if (text.trim().length === 0) {
+    if (!locationVersion) {
+      throw new Error(
+        `Create version succeeded (${response.status}) but the response had no body and no Location header — cannot determine the new version id.`
+      );
+    }
+    return {
+      key: contentId,
+      _metadata: { version: locationVersion },
+      displayName: body.displayName,
+      locale: body.locale,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(text) as CmsVersionSummary;
+    // If the parsed body didn't include a version id but Location did, prefer Location.
+    if (!parsed._metadata?.version && !parsed.version && locationVersion) {
+      parsed._metadata = { ...(parsed._metadata ?? {}), version: locationVersion };
+    }
+    return parsed;
+  } catch (e) {
+    throw new Error(
+      `Create version succeeded (${response.status}) but the response body was not valid JSON: ${(e as Error).message}. Body: ${text.slice(0, 200)}`
+    );
+  }
 }
 
 export async function getVersion(
@@ -202,6 +244,18 @@ export async function getVersion(
   const etag = response.headers.get("etag") || "";
   const data = (await response.json()) as CmsVersionSummary;
   return { data, etag };
+}
+
+async function safeJsonOrEmpty(response: Response): Promise<CmsVersionSummary> {
+  const text = await response.text();
+  if (text.trim().length === 0) return {} as CmsVersionSummary;
+  try {
+    return JSON.parse(text) as CmsVersionSummary;
+  } catch (e) {
+    throw new Error(
+      `Response body was not valid JSON: ${(e as Error).message}. Body: ${text.slice(0, 200)}`
+    );
+  }
 }
 
 export async function patchVersion(
@@ -227,7 +281,7 @@ export async function patchVersion(
     throw new Error(`Patch version failed (${response.status}): ${text}`);
   }
 
-  return (await response.json()) as CmsVersionSummary;
+  return await safeJsonOrEmpty(response);
 }
 
 export async function publishVersion(
@@ -248,7 +302,11 @@ export async function publishVersion(
     throw new Error(`Publish version failed (${response.status}): ${text}`);
   }
 
-  return (await response.json()) as CmsVersionSummary;
+  const parsed = await safeJsonOrEmpty(response);
+  // If the publish endpoint returns no body, surface "published" as the
+  // logical status so callers don't see a blank result.
+  if (!parsed.status) parsed.status = "published";
+  return parsed;
 }
 
 export async function getContentType(
