@@ -28,7 +28,7 @@ function extractElements(xml: string, tag: string): string[] {
 
 function textContent(xml: string, tag: string): string | undefined {
   const match = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`));
-  return match ? match[1].trim() : undefined;
+  return match && match[1] ? match[1].trim() : undefined;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -273,12 +273,14 @@ export async function getSitemap(input: GetSitemapInput) {
         );
         for (let j = 0; j < results.length; j++) {
           const result = results[j];
+          const childSitemap = batch[j];
+          if (!result || !childSitemap) continue;
           if (result.status === "fulfilled") {
             const childUrls = extractElements(result.value, "url");
             analyzeUrlEntries(childUrls, analysis, now);
           } else {
             analysis.errors.push(
-              `Failed to fetch ${batch[j].loc}: ${result.reason}`
+              `Failed to fetch ${childSitemap.loc}: ${String(result.reason)}`
             );
           }
         }
@@ -307,7 +309,7 @@ export async function getSitemap(input: GetSitemapInput) {
     // Multiple languages via hreflang — the largest language group approximates
     // unique content; others are translations of the same pages.
     const sorted = langCounts.sort((a, b) => b[1] - a[1]);
-    analysis.estimated_unique_content_pages = sorted[0][1];
+    analysis.estimated_unique_content_pages = sorted[0]?.[1] ?? 0;
   }
 
   // Sort urls_by_language descending

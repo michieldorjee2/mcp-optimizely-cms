@@ -62,7 +62,7 @@ function getVersionId(v: CmsVersionSummary | undefined | null): string | undefin
 function parseApiError(e: unknown): { status?: number; apiError?: unknown; message: string } {
   const message = e instanceof Error ? e.message : String(e);
   const match = message.match(/\((\d+)\):\s*(\{[\s\S]+\})\s*$/);
-  if (match) {
+  if (match && match[1] && match[2]) {
     const status = Number(match[1]);
     try {
       return { status, apiError: JSON.parse(match[2]), message };
@@ -83,7 +83,7 @@ function parseApiError(e: unknown): { status?: number; apiError?: unknown; messa
  *   5. Fall back to the first item (Graph's relevance order).
  */
 function pickPrimary(
-  matches: GraphContentMatch[],
+  matches: [GraphContentMatch, ...GraphContentMatch[]],
   needle: string
 ): GraphContentMatch {
   if (matches.length === 1) return matches[0];
@@ -114,11 +114,12 @@ function pickPrimary(
   );
   if (startsWith) return startsWith;
 
-  // 4. Shortest URL (most "general" page)
+  // 4. Shortest URL (most "general" page). The non-empty input guarantees
+  // the sort produces at least one element.
   const sortedByLen = [...matches].sort(
     (a, b) => (a.url?.length ?? Infinity) - (b.url?.length ?? Infinity)
   );
-  return sortedByLen[0];
+  return sortedByLen[0] ?? matches[0];
 }
 
 /**
@@ -160,11 +161,11 @@ async function resolveContentId(
     return { kind: "none", reason: "Provide one of: contentId, slug, or search." };
   }
 
-  if (!matches || matches.length === 0) {
-    return { kind: "none", reason: `No pages match '${needle}'.` };
+  if (!matches || matches.length === 0 || !needle) {
+    return { kind: "none", reason: `No pages match '${needle ?? ""}'.` };
   }
 
-  const primary = pickPrimary(matches, needle!);
+  const primary = pickPrimary(matches as [GraphContentMatch, ...GraphContentMatch[]], needle);
   const alternatives = matches.filter((m) => m.key !== primary.key);
   return {
     kind: "single",

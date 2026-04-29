@@ -67,7 +67,7 @@ function parseApiError(e: unknown): {
 } {
   const message = e instanceof Error ? e.message : String(e);
   const match = message.match(/\((\d+)\):\s*(\{[\s\S]+\})\s*$/);
-  if (match) {
+  if (match && match[1] && match[2]) {
     const status = Number(match[1]);
     try {
       return { status, apiError: JSON.parse(match[2]), message };

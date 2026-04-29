@@ -50,11 +50,12 @@ export function validateToken(token: string): boolean {
     const parts = token.split(".");
     if (parts.length !== 3) return false;
     const [headerB64, payloadB64, sig] = parts;
+    if (!headerB64 || !payloadB64 || !sig) return false;
     const expectedSig = createHmac("sha256", getAuthSecret())
       .update(`${headerB64}.${payloadB64}`)
       .digest("base64url");
     if (sig !== expectedSig) return false;
-    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as { exp?: number };
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return false;
     return true;
   } catch {
@@ -90,7 +91,10 @@ export function consumeAuthCode(code: string, redirectUri: string): boolean {
       .update(payloadB64)
       .digest("base64url");
     if (sig !== expectedSig) return false;
-    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString());
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as {
+      exp: number;
+      redirectUri: string;
+    };
     if (payload.exp < Date.now()) return false;
     if (payload.redirectUri !== redirectUri) return false;
     return true;
@@ -103,7 +107,7 @@ export function consumeAuthCode(code: string, redirectUri: string): boolean {
 // Stateless client registration — always succeeds
 // ---------------------------------------------------------------------------
 
-export function registerClient(redirectUris: string[]): { clientId: string; clientSecret: string } {
+export function registerClient(_redirectUris: string[]): { clientId: string; clientSecret: string } {
   const clientId = `mcp-client-${randomBytes(16).toString("hex")}`;
   const clientSecret = randomBytes(32).toString("hex");
   return { clientId, clientSecret };
