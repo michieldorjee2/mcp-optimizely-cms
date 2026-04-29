@@ -3,6 +3,7 @@ import { createPageSchema, createPage } from "./tools/create-page.js";
 import { updatePageSchema, updatePage } from "./tools/update-page.js";
 import { listTemplatesSchema, listTemplatesHandler } from "./tools/list-templates.js";
 import { createTemplateSchema, createTemplate } from "./tools/create-template.js";
+import { getPageSchema, getPage } from "./tools/get-page.js";
 
 export function createMcpServer() {
   const server = new McpServer({
@@ -57,6 +58,32 @@ export function createMcpServer() {
       }
       try {
         const result = await updatePage(params, clientId, clientSecret);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_page",
+    "Look up a page in Optimizely CMS by contentId, slug (URL route), or free-text search, and return its current values + property schema. Use this before update_page to see what fields exist, what shape they expect, and what they currently hold — so updates can be built in a single round-trip without separate Graph queries.",
+    {
+      contentId: getPageSchema.shape.contentId,
+      slug: getPageSchema.shape.slug,
+      search: getPageSchema.shape.search,
+      locale: getPageSchema.shape.locale,
+      includeSchema: getPageSchema.shape.includeSchema,
+    },
+    async (params) => {
+      const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
+      const clientSecret = process.env.OPTIMIZELY_CMS_CLIENT_SECRET;
+      const graphKey = process.env.OPTIMIZELY_GRAPH_KEY;
+      if (!clientId || !clientSecret) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
+      }
+      try {
+        const result = await getPage(params, clientId, clientSecret, graphKey);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };

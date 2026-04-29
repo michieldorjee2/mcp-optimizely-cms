@@ -229,3 +229,116 @@ export async function buildProperty(
 export function isUserField(fieldName: string): boolean {
   return !fieldName.startsWith("_");
 }
+
+// ---------------------------------------------------------------------------
+// Content lookup via the Optimizely Graph (_Content interface).
+// Used by get_page to find content by slug / search term without the agent
+// having to formulate Graph queries itself.
+// ---------------------------------------------------------------------------
+
+export interface GraphContentMatch {
+  key: string;
+  displayName?: string;
+  types?: string[];
+  locale?: string;
+  url?: string;
+  routeSegment?: string;
+}
+
+interface ContentSearchResponse {
+  data?: {
+    _Content?: {
+      items?: Array<{
+        _metadata?: {
+          key?: string;
+          displayName?: string;
+          types?: string[];
+          locale?: string;
+          url?: { default?: string; hierarchical?: string };
+          routeSegment?: string;
+        };
+      }>;
+    };
+  };
+  errors?: Array<{ message: string }>;
+}
+
+async function runContentQuery(
+  graphKey: string,
+  whereClause: string
+): Promise<GraphContentMatch[]> {
+  const query = `{
+    _Content(where: ${whereClause}, limit: 25) {
+      items {
+        _metadata {
+          key
+          displayName
+          types
+          locale
+          routeSegment
+          url { default hierarchical }
+        }
+      }
+    }
+  }`;
+
+  const response = await fetch(`${GRAPH_URL}?auth=${encodeURIComponent(graphKey)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Graph content search failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as ContentSearchResponse;
+  if (data.errors?.length) {
+    throw new Error(`Graph content search errors: ${data.errors.map((e) => e.message).join("; ")}`);
+  }
+
+  const items = data.data?._Content?.items ?? [];
+  return items
+    .map((item) => {
+      const m = item._metadata;
+      if (!m?.key) return null;
+      return {
+        key: m.key,
+        displayName: m.displayName,
+        types: m.types,
+        locale: m.locale,
+        url: m.url?.default ?? m.url?.hierarchical,
+        routeSegment: m.routeSegment,
+      } as GraphContentMatch;
+    })
+    .filter((m): m is GraphContentMatch => m !== null);
+}
+
+/** Try to find content whose URL or routeSegment matches the given slug. */
+export async function findContentByRoute(
+  graphKey: string,
+  slug: string
+): Promise<GraphContentMatch[]> {
+  // Normalize: search for matches both with and without leading slash.
+  const stripped = slug.startsWith("/") ? slug : `/${slug}`;
+  const where = `{ _or: [
+    { _metadata: { url: { default: { eq: "${stripped}" } } } }
+    { _metadata: { url: { default: { endsWith: "${stripped}" } } } }
+    { _metadata: { routeSegment: { eq: "${slug.replace(/^\//, "")}" } } }
+  ] }`;
+  return runContentQuery(graphKey, where);
+}
+
+/** Free-text search across displayName + URL. */
+export async function searchContent(
+  graphKey: string,
+  term: string
+): Promise<GraphContentMatch[]> {
+  const where = `{ _or: [
+    { _metadata: { displayName: { contains: "${term}" } } }
+    { _metadata: { url: { default: { contains: "${term}" } } } }
+    { _metadata: { routeSegment: { contains: "${term}" } } }
+  ] }`;
+  return runContentQuery(graphKey, where);
+}
