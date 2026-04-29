@@ -3,16 +3,22 @@ import {
   updateContent,
   getContent,
   createVersion,
-  patchVersion,
-  getVersion,
   publishVersion,
   type CmsVersionSummary,
 } from "../services/cms-api.js";
 
 export const updatePageSchema = z.object({
   contentId: z.string().describe("The content ID of the page to update"),
-  locale: z.string().optional().describe("Content locale to update (e.g. 'en'). Defaults to the existing content's locale."),
-  displayName: z.string().optional().describe("New display name. Defaults to the existing content's display name (Optimizely requires one on every version)."),
+  locale: z
+    .string()
+    .optional()
+    .describe("Content locale to update (e.g. 'en'). Defaults to the existing content's locale."),
+  displayName: z
+    .string()
+    .optional()
+    .describe(
+      "New display name. Defaults to the existing content's display name (Optimizely requires one on every version)."
+    ),
   routeSegment: z.string().optional().describe("New URL route segment"),
   status: z
     .string()
@@ -37,8 +43,8 @@ function getVersionId(v: CmsVersionSummary | undefined | null): string | undefin
 
 /**
  * The cms-api helpers throw `Error("... failed (NNN): {json}")`. Re-parse that
- * into a structured shape so the caller (and the user) can see the API's
- * `errors[]` array directly instead of digging through a string.
+ * into a structured shape so the caller can see the API's `errors[]` array
+ * directly instead of digging through a string.
  */
 function parseApiError(e: unknown): {
   status?: number;
@@ -64,9 +70,9 @@ export async function updatePage(
   clientSecret: string
 ) {
   // Parse properties from JSON string
-  let properties: Record<string, unknown> = {};
+  let overrides: Record<string, unknown> = {};
   try {
-    properties = JSON.parse(input.propertiesJson || "{}");
+    overrides = JSON.parse(input.propertiesJson || "{}");
   } catch {
     return {
       success: false,
@@ -75,13 +81,13 @@ export async function updatePage(
   }
 
   const wantsPublish = input.status.toLowerCase() === "published";
-  const hasPropertyEdits = Object.keys(properties).length > 0;
-  const hasVersionEdits = Boolean(input.displayName) || hasPropertyEdits;
 
   // ---------------------------------------------------------------------
-  // 1. Fetch the current content. We need its displayName + locale to fork
-  //    a new version (Optimizely requires displayName, and we want the
-  //    locale to match if the caller didn't specify one).
+  // 1. Fetch the current content. We use this as the base for the new
+  //    version — POST /v1/content/{key}/versions does NOT fork or inherit
+  //    properties; it requires every required field in the body. So we
+  //    clone the current properties and merge the caller's overrides on
+  //    top.
   // ---------------------------------------------------------------------
   let existing;
   try {
@@ -122,31 +128,27 @@ export async function updatePage(
     }
   }
 
-  // If there's nothing to version-edit and no publish requested, we're done.
-  if (!hasVersionEdits && !wantsPublish) {
-    return {
-      success: true,
-      contentId: input.contentId,
-      message: "Updated content metadata only (no version edits or publish requested).",
-    };
-  }
+  // ---------------------------------------------------------------------
+  // 3. Merge caller overrides into the existing property set, so the
+  //    new version has every required field (the rest unchanged).
+  // ---------------------------------------------------------------------
+  const mergedProperties: Record<string, unknown> = {
+    ...(existing.properties ?? {}),
+    ...overrides,
+  };
 
-  // ---------------------------------------------------------------------
-  // 3. Fork a new version from the latest published. We send ONLY
-  //    displayName + locale here — no properties — so the new version
-  //    inherits all existing properties unchanged. We'll merge-patch in
-  //    the changes next, which is safer for partial updates: if one
-  //    property has a bad shape, only that property errors, not the
-  //    whole batch.
-  // ---------------------------------------------------------------------
   const displayName = input.displayName ?? existing.displayName;
   const locale = input.locale ?? existing.locale;
 
+  // ---------------------------------------------------------------------
+  // 4. Create the new version with the full merged property set.
+  // ---------------------------------------------------------------------
   let created: CmsVersionSummary;
   try {
     created = await createVersion(clientId, clientSecret, input.contentId, {
       displayName,
       ...(locale ? { locale } : {}),
+      properties: mergedProperties,
     });
   } catch (e) {
     const parsed = parseApiError(e);
@@ -155,7 +157,13 @@ export async function updatePage(
       stage: "create-version",
       error: parsed.message,
       apiError: parsed.apiError,
-      sentBody: { displayName, locale },
+      hint:
+        "The CMS rejected the new version. Most common cause: one of the " +
+        "properties you provided has the wrong shape. Compare your override " +
+        "to the matching field in `currentProperties` below to see the format " +
+        "Optimizely expects.",
+      attemptedOverrides: overrides,
+      currentProperties: existing.properties,
     };
   }
 
@@ -171,44 +179,9 @@ export async function updatePage(
   }
 
   // ---------------------------------------------------------------------
-  // 4. PATCH the new version with the property changes (if any). Using
-  //    application/merge-patch+json so unmentioned properties are left
-  //    intact.
-  // ---------------------------------------------------------------------
-  let patched: CmsVersionSummary = created;
-  if (hasPropertyEdits) {
-    try {
-      const { etag } = await getVersion(clientId, clientSecret, input.contentId, versionId);
-      patched = await patchVersion(
-        clientId,
-        clientSecret,
-        input.contentId,
-        versionId,
-        { properties },
-        etag
-      );
-    } catch (e) {
-      const parsed = parseApiError(e);
-      return {
-        success: false,
-        stage: "patch-version",
-        contentId: input.contentId,
-        versionId,
-        error: parsed.message,
-        apiError: parsed.apiError,
-        hint:
-          "The new draft version was created, but PATCHing the property changes failed. " +
-          "Common causes: a property value has the wrong shape (e.g. a 'component' field needs to be an object, an array property expects { value: [...] }), or the property name is wrong. " +
-          "Check the existing properties below for the expected shape.",
-        currentProperties: existing.properties,
-      };
-    }
-  }
-
-  // ---------------------------------------------------------------------
   // 5. Optionally publish.
   // ---------------------------------------------------------------------
-  let finalStatus = patched.status ?? "draft";
+  let finalStatus = created.status ?? "draft";
   if (wantsPublish) {
     try {
       const published = await publishVersion(
@@ -227,7 +200,9 @@ export async function updatePage(
         versionId,
         error: parsed.message,
         apiError: parsed.apiError,
-        hint: "The version was created and edited but failed to publish. It is available as a draft in the CMS.",
+        hint:
+          "The version was created and edited but failed to publish. It is " +
+          "available as a draft in the CMS.",
       };
     }
   }
@@ -236,9 +211,10 @@ export async function updatePage(
     success: true,
     contentId: input.contentId,
     versionId,
-    displayName: patched.displayName,
-    contentType: patched.contentType,
+    displayName: created.displayName,
+    contentType: created.contentType,
     status: finalStatus,
     published: finalStatus.toLowerCase() === "published",
+    updatedFields: Object.keys(overrides),
   };
 }
