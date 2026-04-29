@@ -112,6 +112,138 @@ export async function updateContent(
   return (await response.json()) as CmsContentResponse;
 }
 
+// ---------------------------------------------------------------------------
+// Version-aware update flow
+// ---------------------------------------------------------------------------
+// PATCH /content/{key} only updates content-level metadata (e.g. container,
+// routeSegment). Per-version data — displayName, properties, locale — must
+// be patched on a specific version, and status transitions go through the
+// dedicated :publish / :ready / :draft endpoints.
+//
+// See: https://docs.developers.optimizely.com/content-management-system/v1.0.0-CMS-SaaS/docs/manage-content-using-the-rest-api
+// ---------------------------------------------------------------------------
+
+export interface CmsVersionSummary {
+  key: string;
+  displayName?: string;
+  contentType?: string[];
+  locale?: string;
+  status?: string;
+  _metadata?: { version?: string };
+  // Some shapes expose version at top-level
+  version?: string;
+}
+
+export async function listVersions(
+  clientId: string,
+  clientSecret: string,
+  contentId: string,
+  locale?: string
+): Promise<CmsVersionSummary[]> {
+  const headers = await cmsHeaders(clientId, clientSecret);
+  const url = new URL(`${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions`);
+  if (locale) url.searchParams.set("locale", locale);
+  const response = await fetch(url.toString(), { method: "GET", headers });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`List versions failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as { items?: CmsVersionSummary[] } | CmsVersionSummary[];
+  if (Array.isArray(data)) return data;
+  return data.items ?? [];
+}
+
+export async function createVersion(
+  clientId: string,
+  clientSecret: string,
+  contentId: string,
+  body: { displayName?: string; locale?: string; properties?: Record<string, unknown> }
+): Promise<CmsVersionSummary> {
+  const headers = await cmsHeaders(clientId, clientSecret);
+  const response = await fetch(
+    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions`,
+    { method: "POST", headers, body: JSON.stringify(body) }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Create version failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as CmsVersionSummary;
+}
+
+export async function getVersion(
+  clientId: string,
+  clientSecret: string,
+  contentId: string,
+  versionId: string
+): Promise<{ data: CmsVersionSummary; etag: string }> {
+  const headers = await cmsHeaders(clientId, clientSecret);
+  const response = await fetch(
+    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions/${versionId}`,
+    { method: "GET", headers }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Get version failed (${response.status}): ${text}`);
+  }
+
+  const etag = response.headers.get("etag") || "";
+  const data = (await response.json()) as CmsVersionSummary;
+  return { data, etag };
+}
+
+export async function patchVersion(
+  clientId: string,
+  clientSecret: string,
+  contentId: string,
+  versionId: string,
+  body: Record<string, unknown>,
+  etag: string
+): Promise<CmsVersionSummary> {
+  const headers = await cmsHeaders(clientId, clientSecret, {
+    "Content-Type": "application/merge-patch+json",
+    ...(etag ? { "If-Match": etag } : {}),
+  });
+
+  const response = await fetch(
+    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions/${versionId}`,
+    { method: "PATCH", headers, body: JSON.stringify(body) }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Patch version failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as CmsVersionSummary;
+}
+
+export async function publishVersion(
+  clientId: string,
+  clientSecret: string,
+  contentId: string,
+  versionId: string,
+  etag?: string
+): Promise<CmsVersionSummary> {
+  const headers = await cmsHeaders(clientId, clientSecret, etag ? { "If-Match": etag } : {});
+  const response = await fetch(
+    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions/${versionId}:publish`,
+    { method: "POST", headers, body: JSON.stringify({}) }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Publish version failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as CmsVersionSummary;
+}
+
 export async function getContentType(
   clientId: string,
   clientSecret: string,
