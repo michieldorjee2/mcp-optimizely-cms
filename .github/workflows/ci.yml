@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    name: typecheck + lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier
+        run: npm run format:check
+
+      - name: Tests
+        run: npm test
+
+  smoke:
+    name: smoke test against preview deployment
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for Vercel preview
+        # Vercel comments on the PR with the preview URL once the build is
+        # ready. The smoke step is gated by the type/lint/test step (`needs:
+        # check`) so we only run when everything else has already passed.
+        run: |
+          echo "Smoke test runs after Vercel preview deploys."
+          echo "Hook this up by reading the deployment URL from the Vercel"
+          echo "for-pull-request comment via gh api, then POSTing a"
+          echo "tools/list JSON-RPC and asserting >=9 tools."
+          echo "Skipped in the template — wire up once a VERCEL_TOKEN secret"
+          echo "is configured."
