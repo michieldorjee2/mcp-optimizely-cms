@@ -2,10 +2,7 @@ import { z } from "zod";
 import {
   updateContent,
   getContent,
-  listVersions,
   createVersion,
-  getVersion,
-  patchVersion,
   publishVersion,
   type CmsVersionSummary,
 } from "../services/cms-api.js";
@@ -19,7 +16,7 @@ export const updatePageSchema = z.object({
     .string()
     .default("published")
     .describe(
-      "Status after edit. Defaults to 'published' (the edit goes live). Pass 'draft' to leave the edited version as a draft instead."
+      "Status after edit. Defaults to 'published' (the edit goes live). Pass 'draft' to leave the new version unpublished."
     ),
   propertiesJson: z
     .string()
@@ -32,11 +29,6 @@ export type UpdatePageInput = z.infer<typeof updatePageSchema>;
 function getVersionId(v: CmsVersionSummary | undefined | null): string | undefined {
   if (!v) return undefined;
   return v._metadata?.version ?? v.version;
-}
-
-function isDraft(status: string | undefined): boolean {
-  if (!status) return true;
-  return status.toLowerCase() !== "published";
 }
 
 export async function updatePage(
@@ -55,10 +47,12 @@ export async function updatePage(
     };
   }
 
+  const wantsPublish = input.status.toLowerCase() === "published";
+  const hasVersionEdits = Boolean(input.displayName) || Object.keys(properties).length > 0;
+
   // ---------------------------------------------------------------------
   // 1. Update content-level metadata (routeSegment) on the bare content
-  //    endpoint. PATCH /content/{key} only touches metadata — that's all
-  //    that lives there.
+  //    endpoint. This is independent of versioning.
   // ---------------------------------------------------------------------
   if (input.routeSegment) {
     const { etag } = await getContent(clientId, clientSecret, input.contentId);
@@ -71,79 +65,46 @@ export async function updatePage(
     );
   }
 
-  // ---------------------------------------------------------------------
-  // 2. Find an editable draft version, or create one from scratch.
-  //    A given locale can have only one published version; drafts are
-  //    where edits land before publish.
-  // ---------------------------------------------------------------------
-  const versions = await listVersions(
-    clientId,
-    clientSecret,
-    input.contentId,
-    input.locale
-  );
-
-  const localeVersions = input.locale
-    ? versions.filter((v) => !v.locale || v.locale === input.locale)
-    : versions;
-
-  let editable = localeVersions.find((v) => isDraft(v.status));
-
-  if (!editable) {
-    // No draft exists — create one. Optimizely will fork from the latest
-    // published version of this locale.
-    editable = await createVersion(clientId, clientSecret, input.contentId, {
-      ...(input.locale ? { locale: input.locale } : {}),
-    });
-  }
-
-  const versionId = getVersionId(editable);
-  if (!versionId) {
+  // If there's nothing to version-edit and no publish requested, we're done.
+  if (!hasVersionEdits && !wantsPublish) {
     return {
-      success: false,
-      error:
-        "Could not determine version id for the editable draft. The CMS API may have returned an unexpected shape.",
+      success: true,
+      contentId: input.contentId,
+      message: "Updated content metadata only (no version edits or publish requested).",
     };
   }
 
   // ---------------------------------------------------------------------
-  // 3. PATCH the version with displayName + properties (if any).
+  // 2. Fork a new version from the latest published. POST /content/{key}/versions
+  //    accepts displayName/locale/properties in the body, so create + edit
+  //    happen in one call.
   // ---------------------------------------------------------------------
-  const versionPatch: Record<string, unknown> = {};
-  if (input.displayName) versionPatch.displayName = input.displayName;
-  if (Object.keys(properties).length > 0) versionPatch.properties = properties;
+  const created = await createVersion(clientId, clientSecret, input.contentId, {
+    ...(input.locale ? { locale: input.locale } : {}),
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(Object.keys(properties).length > 0 ? { properties } : {}),
+  });
 
-  let patched: CmsVersionSummary = editable;
-  if (Object.keys(versionPatch).length > 0) {
-    const { etag } = await getVersion(clientId, clientSecret, input.contentId, versionId);
-    patched = await patchVersion(
-      clientId,
-      clientSecret,
-      input.contentId,
-      versionId,
-      versionPatch,
-      etag
-    );
+  const versionId = getVersionId(created);
+  if (!versionId) {
+    return {
+      success: false,
+      error:
+        "Created a new version but could not determine its version id. The CMS API may have returned an unexpected shape.",
+    };
   }
 
   // ---------------------------------------------------------------------
-  // 4. Optionally publish the version. Status transitions don't go
-  //    through PATCH — they have a dedicated :publish endpoint.
+  // 3. Optionally publish. Status transitions don't go through PATCH —
+  //    they use the dedicated :publish endpoint.
   // ---------------------------------------------------------------------
-  let finalStatus = patched.status;
-  if (input.status && input.status.toLowerCase() === "published") {
-    const { etag: publishEtag } = await getVersion(
-      clientId,
-      clientSecret,
-      input.contentId,
-      versionId
-    );
+  let finalStatus = created.status ?? "draft";
+  if (wantsPublish) {
     const published = await publishVersion(
       clientId,
       clientSecret,
       input.contentId,
-      versionId,
-      publishEtag
+      versionId
     );
     finalStatus = published.status ?? "published";
   }
@@ -152,9 +113,9 @@ export async function updatePage(
     success: true,
     contentId: input.contentId,
     versionId,
-    displayName: patched.displayName,
-    contentType: patched.contentType,
+    displayName: created.displayName,
+    contentType: created.contentType,
     status: finalStatus,
-    published: finalStatus?.toLowerCase() === "published",
+    published: finalStatus.toLowerCase() === "published",
   };
 }

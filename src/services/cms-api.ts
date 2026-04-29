@@ -2,6 +2,9 @@ import type { CmsContentBody, CmsContentResponse, CmsTokenResponse, CmsContentTy
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
 const CMS_API_VERSION = "preview3/experimental";
+// The /preview3/experimental/ prefix doesn't expose the versions subresource
+// or the publish transition endpoints — those live on the /v1/ surface.
+const CMS_API_V1 = "v1";
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -141,7 +144,7 @@ export async function listVersions(
   locale?: string
 ): Promise<CmsVersionSummary[]> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const url = new URL(`${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions`);
+  const url = new URL(`${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions`);
   if (locale) url.searchParams.set("locale", locale);
   const response = await fetch(url.toString(), { method: "GET", headers });
 
@@ -163,7 +166,7 @@ export async function createVersion(
 ): Promise<CmsVersionSummary> {
   const headers = await cmsHeaders(clientId, clientSecret);
   const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions`,
+    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions`,
     { method: "POST", headers, body: JSON.stringify(body) }
   );
 
@@ -183,7 +186,7 @@ export async function getVersion(
 ): Promise<{ data: CmsVersionSummary; etag: string }> {
   const headers = await cmsHeaders(clientId, clientSecret);
   const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions/${versionId}`,
+    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions/${versionId}`,
     { method: "GET", headers }
   );
 
@@ -211,7 +214,7 @@ export async function patchVersion(
   });
 
   const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions/${versionId}`,
+    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions/${versionId}`,
     { method: "PATCH", headers, body: JSON.stringify(body) }
   );
 
@@ -232,7 +235,7 @@ export async function publishVersion(
 ): Promise<CmsVersionSummary> {
   const headers = await cmsHeaders(clientId, clientSecret, etag ? { "If-Match": etag } : {});
   const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}/versions/${versionId}:publish`,
+    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions/${versionId}:publish`,
     { method: "POST", headers, body: JSON.stringify({}) }
   );
 
