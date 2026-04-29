@@ -132,6 +132,7 @@ export interface CmsVersionSummary {
   contentType?: string[];
   locale?: string;
   status?: string;
+  properties?: Record<string, unknown>;
   _metadata?: { version?: string };
   // Some shapes expose version at top-level
   version?: string;
@@ -141,11 +142,14 @@ export async function listVersions(
   clientId: string,
   clientSecret: string,
   contentId: string,
-  locale?: string
+  options?: { locales?: string[]; statuses?: string[] }
 ): Promise<CmsVersionSummary[]> {
   const headers = await cmsHeaders(clientId, clientSecret);
   const url = new URL(`${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions`);
-  if (locale) url.searchParams.set("locale", locale);
+  // Optimizely's docs use plural query params with comma-separated values:
+  // ?locales=fr,de&statuses=draft,ready
+  if (options?.locales?.length) url.searchParams.set("locales", options.locales.join(","));
+  if (options?.statuses?.length) url.searchParams.set("statuses", options.statuses.join(","));
   const response = await fetch(url.toString(), { method: "GET", headers });
 
   if (!response.ok) {

@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   updateContent,
   getContent,
+  listVersions,
+  getVersion,
   createVersion,
   publishVersion,
   type CmsVersionSummary,
@@ -17,7 +19,7 @@ export const updatePageSchema = z.object({
     .string()
     .optional()
     .describe(
-      "New display name. Defaults to the existing content's display name (Optimizely requires one on every version)."
+      "New display name. Defaults to the existing version's display name (Optimizely requires one on every version)."
     ),
   routeSegment: z.string().optional().describe("New URL route segment"),
   status: z
@@ -69,7 +71,7 @@ export async function updatePage(
   clientId: string,
   clientSecret: string
 ) {
-  // Parse properties from JSON string
+  // Parse property overrides
   let overrides: Record<string, unknown> = {};
   try {
     overrides = JSON.parse(input.propertiesJson || "{}");
@@ -83,29 +85,8 @@ export async function updatePage(
   const wantsPublish = input.status.toLowerCase() === "published";
 
   // ---------------------------------------------------------------------
-  // 1. Fetch the current content. We use this as the base for the new
-  //    version — POST /v1/content/{key}/versions does NOT fork or inherit
-  //    properties; it requires every required field in the body. So we
-  //    clone the current properties and merge the caller's overrides on
-  //    top.
-  // ---------------------------------------------------------------------
-  let existing;
-  try {
-    existing = (await getContent(clientId, clientSecret, input.contentId)).data;
-  } catch (e) {
-    const parsed = parseApiError(e);
-    return {
-      success: false,
-      stage: "get-content",
-      error: parsed.message,
-      apiError: parsed.apiError,
-      hint: "Could not fetch the existing content. Check that contentId is correct.",
-    };
-  }
-
-  // ---------------------------------------------------------------------
-  // 2. Update content-level metadata (routeSegment) if provided.
-  //    Independent of versioning.
+  // 1. Update content-level metadata (routeSegment) on the bare content
+  //    endpoint. This lives on the content wrapper, not on a version.
   // ---------------------------------------------------------------------
   if (input.routeSegment) {
     try {
@@ -129,19 +110,101 @@ export async function updatePage(
   }
 
   // ---------------------------------------------------------------------
-  // 3. Merge caller overrides into the existing property set, so the
-  //    new version has every required field (the rest unchanged).
+  // 2. Find the latest published version. Version-level data — displayName,
+  //    locale, properties — does NOT live on the content wrapper. We need
+  //    to fetch a specific version to get them.
+  // ---------------------------------------------------------------------
+  let versionList: CmsVersionSummary[];
+  try {
+    versionList = await listVersions(clientId, clientSecret, input.contentId, {
+      ...(input.locale ? { locales: [input.locale] } : {}),
+      statuses: ["published"],
+    });
+  } catch (e) {
+    const parsed = parseApiError(e);
+    return {
+      success: false,
+      stage: "list-versions",
+      error: parsed.message,
+      apiError: parsed.apiError,
+    };
+  }
+
+  // Fall back to all versions if no published one was found.
+  if (versionList.length === 0) {
+    try {
+      versionList = await listVersions(clientId, clientSecret, input.contentId, {
+        ...(input.locale ? { locales: [input.locale] } : {}),
+      });
+    } catch (e) {
+      const parsed = parseApiError(e);
+      return {
+        success: false,
+        stage: "list-versions",
+        error: parsed.message,
+        apiError: parsed.apiError,
+      };
+    }
+  }
+
+  if (versionList.length === 0) {
+    return {
+      success: false,
+      stage: "list-versions",
+      error: `No versions found for content ${input.contentId}. Cannot update.`,
+    };
+  }
+
+  const baseSummary = versionList[0];
+  const baseVersionId = getVersionId(baseSummary);
+  if (!baseVersionId) {
+    return {
+      success: false,
+      stage: "list-versions",
+      error: "Could not determine version id of the latest version.",
+      response: baseSummary,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // 3. Fetch the full base version (displayName + properties).
+  // ---------------------------------------------------------------------
+  let base;
+  try {
+    base = (await getVersion(clientId, clientSecret, input.contentId, baseVersionId)).data;
+  } catch (e) {
+    const parsed = parseApiError(e);
+    return {
+      success: false,
+      stage: "get-version",
+      error: parsed.message,
+      apiError: parsed.apiError,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // 4. Build the new version body: full base properties + caller overrides.
   // ---------------------------------------------------------------------
   const mergedProperties: Record<string, unknown> = {
-    ...(existing.properties ?? {}),
+    ...(base.properties ?? {}),
     ...overrides,
   };
 
-  const displayName = input.displayName ?? existing.displayName;
-  const locale = input.locale ?? existing.locale;
+  const displayName = input.displayName ?? base.displayName;
+  const locale = input.locale ?? base.locale;
+
+  if (!displayName) {
+    return {
+      success: false,
+      stage: "create-version",
+      error:
+        "Could not determine displayName for the new version. The base version did not include one and the caller did not provide one.",
+      base,
+    };
+  }
 
   // ---------------------------------------------------------------------
-  // 4. Create the new version with the full merged property set.
+  // 5. Create the new version.
   // ---------------------------------------------------------------------
   let created: CmsVersionSummary;
   try {
@@ -163,7 +226,7 @@ export async function updatePage(
         "to the matching field in `currentProperties` below to see the format " +
         "Optimizely expects.",
       attemptedOverrides: overrides,
-      currentProperties: existing.properties,
+      currentProperties: base.properties,
     };
   }
 
@@ -179,7 +242,7 @@ export async function updatePage(
   }
 
   // ---------------------------------------------------------------------
-  // 5. Optionally publish.
+  // 6. Optionally publish.
   // ---------------------------------------------------------------------
   let finalStatus = created.status ?? "draft";
   if (wantsPublish) {
@@ -210,8 +273,9 @@ export async function updatePage(
   return {
     success: true,
     contentId: input.contentId,
+    baseVersionId,
     versionId,
-    displayName: created.displayName,
+    displayName: created.displayName ?? displayName,
     contentType: created.contentType,
     status: finalStatus,
     published: finalStatus.toLowerCase() === "published",
