@@ -127,7 +127,11 @@ export async function updatePage(
   }
 
   // The slug we want the live URL to have when this call finishes.
-  const desiredRouteSegment = input.routeSegment ?? existingMeta.routeSegment;
+  // Will be augmented below from the base version if it isn't on the
+  // content metadata (some Optimizely tenants put routeSegment on the
+  // version, not the content wrapper).
+  let desiredRouteSegment: string | undefined =
+    input.routeSegment ?? existingMeta.routeSegment;
 
   // ---------------------------------------------------------------------
   // 2. Find the latest published version. Version-level data — displayName,
@@ -213,6 +217,12 @@ export async function updatePage(
   const displayName = input.displayName ?? base.displayName;
   const locale = input.locale ?? base.locale;
 
+  // If we still don't have a routeSegment from content metadata, try the
+  // base version — some tenants put routeSegment per-version.
+  if (!desiredRouteSegment && base.routeSegment) {
+    desiredRouteSegment = base.routeSegment;
+  }
+
   if (!displayName) {
     return {
       success: false,
@@ -231,6 +241,11 @@ export async function updatePage(
     created = await createVersion(clientId, clientSecret, input.contentId, {
       displayName,
       ...(locale ? { locale } : {}),
+      // Pass routeSegment in the version body too — Optimizely auto-derives
+      // the slug from displayName when it isn't explicitly provided, so
+      // sending it here is the first line of defense against the drift.
+      // The post-create PATCH below is the second line.
+      ...(desiredRouteSegment ? { routeSegment: desiredRouteSegment } : {}),
       properties: mergedProperties,
     });
   } catch (e) {
@@ -340,6 +355,15 @@ export async function updatePage(
     routeSegment: finalRouteSegment,
     routeSegmentRepinned,
     ...(routeSegmentRepinError ? { routeSegmentRepinError } : {}),
+    // Diagnostic: where did we resolve routeSegment from? Helps debug when
+    // the slug still drifts despite the re-pin.
+    _routeSegmentDebug: {
+      fromInput: input.routeSegment,
+      fromContentMeta: existingMeta.routeSegment,
+      fromBaseVersion: base.routeSegment,
+      fromCreatedVersion: created.routeSegment,
+      desired: desiredRouteSegment,
+    },
     updatedFields: Object.keys(overrides),
   };
 }

@@ -159,6 +159,8 @@ export interface CmsVersionSummary {
   contentType?: string[];
   locale?: string;
   status?: string;
+  /** Some Optimizely tenants expose routeSegment on the version, not the content. */
+  routeSegment?: string;
   properties?: Record<string, unknown>;
   _metadata?: { version?: string };
   // Some shapes expose version at top-level
@@ -204,7 +206,12 @@ export async function createVersion(
   clientId: string,
   clientSecret: string,
   contentId: string,
-  body: { displayName?: string; locale?: string; properties?: Record<string, unknown> }
+  body: {
+    displayName?: string;
+    locale?: string;
+    routeSegment?: string;
+    properties?: Record<string, unknown>;
+  }
 ): Promise<CmsVersionSummary> {
   const headers = await cmsHeaders(clientId, clientSecret);
   const response = await fetch(
