@@ -1,21 +1,38 @@
 import type { GraphIntrospectionField, GraphTypeInfo, TemplateProperty } from "../types.js";
+import { buildCmsApiError } from "./errors.js";
+import { withRetry } from "./retry.js";
+import { GraphContentResponseSchema, GraphIntrospectionResponseSchema } from "./schemas.js";
 
 const GRAPH_URL = "https://cg.optimizely.com/content/v2";
 
-interface IntrospectionResult {
-  data: {
-    __type: GraphTypeInfo | null;
-  };
-}
-
 // Cache sub-type introspections within a single create_template call
 const typeCache = new Map<string, GraphTypeInfo | null>();
+
+async function postGraph(graphKey: string, query: string, endpoint: string): Promise<unknown> {
+  return withRetry(async () => {
+    const response = await fetch(`${GRAPH_URL}?auth=${encodeURIComponent(graphKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw buildCmsApiError({
+        status: response.status,
+        endpoint,
+        method: "POST",
+        bodyText: text,
+      });
+    }
+    return await response.json();
+  });
+}
 
 export async function introspectContentType(
   graphKey: string,
   typeName: string
 ): Promise<GraphTypeInfo | null> {
-  if (typeCache.has(typeName)) return typeCache.get(typeName)!;
+  if (typeCache.has(typeName)) return typeCache.get(typeName) ?? null;
 
   const query = `{
     __type(name: "${typeName}") {
@@ -25,20 +42,11 @@ export async function introspectContentType(
     }
   }`;
 
-  const response = await fetch(`${GRAPH_URL}?auth=${encodeURIComponent(graphKey)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Graph introspection failed (${response.status}): ${text}`);
-  }
-
-  const result = (await response.json()) as IntrospectionResult;
-  typeCache.set(typeName, result.data.__type);
-  return result.data.__type;
+  const raw = await postGraph(graphKey, query, "graph:introspect");
+  const parsed = GraphIntrospectionResponseSchema.parse(raw);
+  const type = (parsed.data.__type as GraphTypeInfo | null) ?? null;
+  typeCache.set(typeName, type);
+  return type;
 }
 
 export function clearTypeCache() {
@@ -245,24 +253,6 @@ export interface GraphContentMatch {
   routeSegment?: string;
 }
 
-interface ContentSearchResponse {
-  data?: {
-    _Content?: {
-      items?: Array<{
-        _metadata?: {
-          key?: string;
-          displayName?: string;
-          types?: string[];
-          locale?: string;
-          url?: { default?: string; hierarchical?: string };
-          routeSegment?: string;
-        };
-      }>;
-    };
-  };
-  errors?: Array<{ message: string }>;
-}
-
 async function runContentQuery(
   graphKey: string,
   whereClause: string
@@ -284,18 +274,8 @@ async function runContentQuery(
     }
   }`;
 
-  const response = await fetch(`${GRAPH_URL}?auth=${encodeURIComponent(graphKey)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Graph content search failed (${response.status}): ${text}`);
-  }
-
-  const data = (await response.json()) as ContentSearchResponse;
+  const raw = await postGraph(graphKey, query, "graph:content");
+  const data = GraphContentResponseSchema.parse(raw);
   if (data.errors?.length) {
     throw new Error(`Graph content search errors: ${data.errors.map((e) => e.message).join("; ")}`);
   }

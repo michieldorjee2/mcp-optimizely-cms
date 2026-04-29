@@ -1,4 +1,14 @@
-import type { CmsContentBody, CmsContentResponse, CmsTokenResponse, CmsContentType } from "../types.js";
+import type { CmsContentBody, CmsContentResponse, CmsContentType } from "../types.js";
+import { buildCmsApiError, CmsApiError } from "./errors.js";
+import { withRetry } from "./retry.js";
+import {
+  ContentResponseSchema,
+  ContentTypeSchema,
+  ContentTypeListSchema,
+  TokenResponseSchema,
+  VersionListResponseSchema,
+} from "./schemas.js";
+import { hasRedis } from "./env.js";
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
 const CMS_API_VERSION = "preview3/experimental";
@@ -6,13 +16,71 @@ const CMS_API_VERSION = "preview3/experimental";
 // or the publish transition endpoints — those live on the /v1/ surface.
 const CMS_API_V1 = "v1";
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+// ---------------------------------------------------------------------------
+// OAuth token cache
+//
+// Two layers:
+//   1. Process-local Map (warm-instance fast path, free).
+//   2. Upstash Redis (shared across cold starts) when configured.
+//
+// The Vercel docs say cold starts cost a few hundred ms; OAuth round-trip
+// adds another 100-300ms, so caching across cold starts is meaningful.
+// ---------------------------------------------------------------------------
+
+interface CachedToken {
+  token: string;
+  expiresAt: number; // epoch ms
+}
+
+let memoryToken: CachedToken | null = null;
+
+const REDIS_TOKEN_KEY = (clientId: string) => `cms:token:${clientId}`;
+
+async function readRedisToken(clientId: string): Promise<CachedToken | null> {
+  if (!hasRedis()) return null;
+  try {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.KV_REST_API_URL!,
+      token: process.env.KV_REST_API_TOKEN!,
+    });
+    const raw = await redis.get<CachedToken | string>(REDIS_TOKEN_KEY(clientId));
+    if (!raw) return null;
+    return typeof raw === "string" ? (JSON.parse(raw) as CachedToken) : (raw as CachedToken);
+  } catch {
+    return null; // best-effort
+  }
+}
+
+async function writeRedisToken(clientId: string, token: CachedToken): Promise<void> {
+  if (!hasRedis()) return;
+  try {
+    const { Redis } = await import("@upstash/redis");
+    const redis = new Redis({
+      url: process.env.KV_REST_API_URL!,
+      token: process.env.KV_REST_API_TOKEN!,
+    });
+    const ttlSeconds = Math.max(60, Math.floor((token.expiresAt - Date.now()) / 1000));
+    await redis.set(REDIS_TOKEN_KEY(clientId), JSON.stringify(token), { ex: ttlSeconds });
+  } catch {
+    // best-effort
+  }
+}
 
 export async function getCmsToken(clientId: string, clientSecret: string): Promise<string> {
-  if (cachedToken && Date.now() < cachedToken.expiresAt) {
-    return cachedToken.token;
+  const now = Date.now();
+
+  // 1. process-local
+  if (memoryToken && now < memoryToken.expiresAt) return memoryToken.token;
+
+  // 2. shared (Redis)
+  const shared = await readRedisToken(clientId);
+  if (shared && now < shared.expiresAt) {
+    memoryToken = shared;
+    return shared.token;
   }
 
+  // 3. fetch fresh
   const params = new URLSearchParams();
   params.set("grant_type", "client_credentials");
   params.set("client_id", clientId);
@@ -26,15 +94,22 @@ export async function getCmsToken(clientId: string, clientSecret: string): Promi
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`CMS auth failed (${response.status}): ${text}`);
+    throw buildCmsApiError({
+      status: response.status,
+      endpoint: "/oauth/token",
+      method: "POST",
+      bodyText: text,
+    });
   }
 
-  const data = (await response.json()) as CmsTokenResponse;
-  cachedToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + (data.expires_in - 30) * 1000,
+  const parsed = TokenResponseSchema.parse(await response.json());
+  const cached: CachedToken = {
+    token: parsed.access_token,
+    expiresAt: now + (parsed.expires_in - 30) * 1000,
   };
-  return cachedToken.token;
+  memoryToken = cached;
+  await writeRedisToken(clientId, cached);
+  return cached.token;
 }
 
 async function cmsHeaders(clientId: string, clientSecret: string, extra?: Record<string, string>) {
@@ -48,24 +123,47 @@ async function cmsHeaders(clientId: string, clientSecret: string, extra?: Record
   };
 }
 
+/**
+ * Wrap a fetch + parse pipeline in retry + structured error construction.
+ * On non-2xx, throws the right CmsApiError subclass; the body text is read
+ * exactly once. On JSON parse failure, throws CmsApiError too.
+ */
+async function cmsFetch(args: {
+  endpoint: string;
+  method: string;
+  init: RequestInit;
+}): Promise<Response> {
+  return withRetry(async () => {
+    const response = await fetch(`${CMS_API_BASE}${args.endpoint}`, args.init);
+    if (!response.ok) {
+      const text = await response.text();
+      throw buildCmsApiError({
+        status: response.status,
+        endpoint: args.endpoint,
+        method: args.method,
+        bodyText: text,
+      });
+    }
+    return response;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Content (preview3/experimental) — used for create / read metadata / patch
+// ---------------------------------------------------------------------------
+
 export async function createContent(
   clientId: string,
   clientSecret: string,
   body: CmsContentBody
 ): Promise<CmsContentResponse> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(`${CMS_API_BASE}/${CMS_API_VERSION}/content`, {
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_VERSION}/content`,
     method: "POST",
-    headers,
-    body: JSON.stringify(body),
+    init: { method: "POST", headers, body: JSON.stringify(body) },
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Create content failed (${response.status}): ${text}`);
-  }
-
-  return (await response.json()) as CmsContentResponse;
+  return ContentResponseSchema.parse(await response.json()) as CmsContentResponse;
 }
 
 export async function getContent(
@@ -74,26 +172,20 @@ export async function getContent(
   contentId: string
 ): Promise<{ data: CmsContentResponse; etag: string }> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(`${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}`, {
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_VERSION}/content/${contentId}`,
     method: "GET",
-    headers,
+    init: { method: "GET", headers },
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Get content failed (${response.status}): ${text}`);
-  }
-
   const etag = response.headers.get("etag") || "";
-  const data = (await response.json()) as CmsContentResponse;
+  const data = ContentResponseSchema.parse(await response.json()) as CmsContentResponse;
   return { data, etag };
 }
 
 /**
  * Same as getContent but hits /v1/content/{key}. The /v1/ surface returns
- * the full metadata (including routeSegment) while /preview3/experimental/
- * returns a stripped-down metadata shape. Used for routeSegment re-pinning
- * in update_page.
+ * the full metadata (including routeSegment in some tenants) while
+ * /preview3/experimental/ returns a stripped-down metadata shape.
  */
 export async function getContentV1(
   clientId: string,
@@ -101,18 +193,13 @@ export async function getContentV1(
   contentId: string
 ): Promise<{ data: CmsContentResponse; etag: string }> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(`${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}`, {
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_V1}/content/${contentId}`,
     method: "GET",
-    headers,
+    init: { method: "GET", headers },
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Get content (v1) failed (${response.status}): ${text}`);
-  }
-
   const etag = response.headers.get("etag") || "";
-  const data = (await response.json()) as CmsContentResponse;
+  const data = ContentResponseSchema.parse(await response.json()) as CmsContentResponse;
   return { data, etag };
 }
 
@@ -127,30 +214,16 @@ export async function updateContent(
     "Content-Type": "application/merge-patch+json",
     "If-Match": etag,
   });
-
-  const response = await fetch(`${CMS_API_BASE}/${CMS_API_VERSION}/content/${contentId}`, {
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_VERSION}/content/${contentId}`,
     method: "PATCH",
-    headers,
-    body: JSON.stringify(body),
+    init: { method: "PATCH", headers, body: JSON.stringify(body) },
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Update content failed (${response.status}): ${text}`);
-  }
-
-  return (await response.json()) as CmsContentResponse;
+  return ContentResponseSchema.parse(await response.json()) as CmsContentResponse;
 }
 
 // ---------------------------------------------------------------------------
-// Version-aware update flow
-// ---------------------------------------------------------------------------
-// PATCH /content/{key} only updates content-level metadata (e.g. container,
-// routeSegment). Per-version data — displayName, properties, locale — must
-// be patched on a specific version, and status transitions go through the
-// dedicated :publish / :ready / :draft endpoints.
-//
-// See: https://docs.developers.optimizely.com/content-management-system/v1.0.0-CMS-SaaS/docs/manage-content-using-the-rest-api
+// Versions (v1) — fork, edit, publish
 // ---------------------------------------------------------------------------
 
 export interface CmsVersionSummary {
@@ -159,11 +232,11 @@ export interface CmsVersionSummary {
   contentType?: string[];
   locale?: string;
   status?: string;
-  /** Some Optimizely tenants expose routeSegment on the version, not the content. */
+  /** Some Optimizely tenants put routeSegment on the version, not the content. */
   routeSegment?: string;
   properties?: Record<string, unknown>;
   _metadata?: { version?: string };
-  // Some shapes expose version at top-level
+  /** Some shapes expose version at top-level. */
   version?: string;
 }
 
@@ -175,20 +248,20 @@ export async function listVersions(
 ): Promise<CmsVersionSummary[]> {
   const headers = await cmsHeaders(clientId, clientSecret);
   const url = new URL(`${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions`);
-  // Optimizely's docs use plural query params with comma-separated values:
-  // ?locales=fr,de&statuses=draft,ready
   if (options?.locales?.length) url.searchParams.set("locales", options.locales.join(","));
   if (options?.statuses?.length) url.searchParams.set("statuses", options.statuses.join(","));
-  const response = await fetch(url.toString(), { method: "GET", headers });
+  const path = url.pathname + url.search;
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`List versions failed (${response.status}): ${text}`);
-  }
+  const response = await cmsFetch({
+    endpoint: path,
+    method: "GET",
+    init: { method: "GET", headers },
+  });
 
-  const data = (await response.json()) as { items?: CmsVersionSummary[] } | CmsVersionSummary[];
-  if (Array.isArray(data)) return data;
-  return data.items ?? [];
+  const raw = await response.json();
+  const parsed = VersionListResponseSchema.parse(raw);
+  if (Array.isArray(parsed)) return parsed as CmsVersionSummary[];
+  return parsed.items as CmsVersionSummary[];
 }
 
 /**
@@ -199,7 +272,7 @@ export async function listVersions(
 function versionIdFromLocation(location: string | null): string | undefined {
   if (!location) return undefined;
   const match = location.match(/\/versions\/([^/?#]+)/);
-  return match ? match[1] : undefined;
+  return match?.[1];
 }
 
 export async function createVersion(
@@ -214,26 +287,28 @@ export async function createVersion(
   }
 ): Promise<CmsVersionSummary> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions`,
-    { method: "POST", headers, body: JSON.stringify(body) }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Create version failed (${response.status}): ${text}`);
-  }
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_V1}/content/${contentId}/versions`,
+    method: "POST",
+    init: { method: "POST", headers, body: JSON.stringify(body) },
+  });
 
   // Optimizely returns 201 Created with Location: /v1/content/{key}/versions/{id}
-  // and may return no body, or a body with the new version. Read once as text
-  // and JSON-parse only if there's content.
+  // and may return no body. Read once as text and JSON-parse only if there's
+  // content.
   const text = await response.text();
   const locationVersion = versionIdFromLocation(response.headers.get("location"));
 
   if (text.trim().length === 0) {
     if (!locationVersion) {
-      throw new Error(
-        `Create version succeeded (${response.status}) but the response had no body and no Location header — cannot determine the new version id.`
+      throw new CmsApiError(
+        "createVersion succeeded but the response had no body and no Location header.",
+        {
+          status: response.status,
+          endpoint: `/${CMS_API_V1}/content/${contentId}/versions`,
+          method: "POST",
+          body: undefined,
+        }
       );
     }
     return {
@@ -241,21 +316,29 @@ export async function createVersion(
       _metadata: { version: locationVersion },
       displayName: body.displayName,
       locale: body.locale,
+      routeSegment: body.routeSegment,
     };
   }
 
+  let parsed: CmsVersionSummary;
   try {
-    const parsed = JSON.parse(text) as CmsVersionSummary;
-    // If the parsed body didn't include a version id but Location did, prefer Location.
-    if (!parsed._metadata?.version && !parsed.version && locationVersion) {
-      parsed._metadata = { ...(parsed._metadata ?? {}), version: locationVersion };
-    }
-    return parsed;
+    parsed = ContentResponseSchema.parse(JSON.parse(text)) as CmsVersionSummary;
   } catch (e) {
-    throw new Error(
-      `Create version succeeded (${response.status}) but the response body was not valid JSON: ${(e as Error).message}. Body: ${text.slice(0, 200)}`
+    throw new CmsApiError(
+      `createVersion response body was not the expected shape: ${(e as Error).message}`,
+      {
+        status: response.status,
+        endpoint: `/${CMS_API_V1}/content/${contentId}/versions`,
+        method: "POST",
+        body: text.slice(0, 500),
+        cause: e,
+      }
     );
   }
+  if (!parsed._metadata?.version && !parsed.version && locationVersion) {
+    parsed._metadata = { ...(parsed._metadata ?? {}), version: locationVersion };
+  }
+  return parsed;
 }
 
 export async function getVersion(
@@ -265,31 +348,20 @@ export async function getVersion(
   versionId: string
 ): Promise<{ data: CmsVersionSummary; etag: string }> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions/${versionId}`,
-    { method: "GET", headers }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Get version failed (${response.status}): ${text}`);
-  }
-
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_V1}/content/${contentId}/versions/${versionId}`,
+    method: "GET",
+    init: { method: "GET", headers },
+  });
   const etag = response.headers.get("etag") || "";
-  const data = (await response.json()) as CmsVersionSummary;
+  const data = ContentResponseSchema.parse(await response.json()) as CmsVersionSummary;
   return { data, etag };
 }
 
 async function safeJsonOrEmpty(response: Response): Promise<CmsVersionSummary> {
   const text = await response.text();
   if (text.trim().length === 0) return {} as CmsVersionSummary;
-  try {
-    return JSON.parse(text) as CmsVersionSummary;
-  } catch (e) {
-    throw new Error(
-      `Response body was not valid JSON: ${(e as Error).message}. Body: ${text.slice(0, 200)}`
-    );
-  }
+  return ContentResponseSchema.parse(JSON.parse(text)) as CmsVersionSummary;
 }
 
 export async function patchVersion(
@@ -305,15 +377,11 @@ export async function patchVersion(
     ...(etag ? { "If-Match": etag } : {}),
   });
 
-  const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions/${versionId}`,
-    { method: "PATCH", headers, body: JSON.stringify(body) }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Patch version failed (${response.status}): ${text}`);
-  }
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_V1}/content/${contentId}/versions/${versionId}`,
+    method: "PATCH",
+    init: { method: "PATCH", headers, body: JSON.stringify(body) },
+  });
 
   return await safeJsonOrEmpty(response);
 }
@@ -326,22 +394,20 @@ export async function publishVersion(
   etag?: string
 ): Promise<CmsVersionSummary> {
   const headers = await cmsHeaders(clientId, clientSecret, etag ? { "If-Match": etag } : {});
-  const response = await fetch(
-    `${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}/versions/${versionId}:publish`,
-    { method: "POST", headers, body: JSON.stringify({}) }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Publish version failed (${response.status}): ${text}`);
-  }
+  const response = await cmsFetch({
+    endpoint: `/${CMS_API_V1}/content/${contentId}/versions/${versionId}:publish`,
+    method: "POST",
+    init: { method: "POST", headers, body: JSON.stringify({}) },
+  });
 
   const parsed = await safeJsonOrEmpty(response);
-  // If the publish endpoint returns no body, surface "published" as the
-  // logical status so callers don't see a blank result.
   if (!parsed.status) parsed.status = "published";
   return parsed;
 }
+
+// ---------------------------------------------------------------------------
+// Content types (used by create_template + create_page validation)
+// ---------------------------------------------------------------------------
 
 export async function getContentType(
   clientId: string,
@@ -349,17 +415,12 @@ export async function getContentType(
   key: string
 ): Promise<CmsContentType> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(`${CMS_API_BASE}/preview3/contenttypes/${encodeURIComponent(key)}`, {
+  const response = await cmsFetch({
+    endpoint: `/preview3/contenttypes/${encodeURIComponent(key)}`,
     method: "GET",
-    headers,
+    init: { method: "GET", headers },
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Get content type failed (${response.status}): ${text}`);
-  }
-
-  return (await response.json()) as CmsContentType;
+  return ContentTypeSchema.parse(await response.json()) as CmsContentType;
 }
 
 export async function listContentTypes(
@@ -367,16 +428,11 @@ export async function listContentTypes(
   clientSecret: string
 ): Promise<unknown[]> {
   const headers = await cmsHeaders(clientId, clientSecret);
-  const response = await fetch(`${CMS_API_BASE}/preview3/contenttypes`, {
+  const response = await cmsFetch({
+    endpoint: `/preview3/contenttypes`,
     method: "GET",
-    headers,
+    init: { method: "GET", headers },
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`List content types failed (${response.status}): ${text}`);
-  }
-
-  const result = (await response.json()) as { items: unknown[] };
-  return result.items;
+  const parsed = ContentTypeListSchema.parse(await response.json());
+  return parsed.items;
 }

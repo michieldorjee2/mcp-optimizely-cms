@@ -12,6 +12,7 @@ import {
   type GraphContentMatch,
 } from "../services/graph-api.js";
 import { buildPropertiesFromContentType } from "../services/template-builder.js";
+import { errorToResponse } from "../services/errors.js";
 
 export const getPageSchema = z.object({
   contentId: z
@@ -59,19 +60,8 @@ function getVersionId(v: CmsVersionSummary | undefined | null): string | undefin
   return v._metadata?.version ?? v.version;
 }
 
-function parseApiError(e: unknown): { status?: number; apiError?: unknown; message: string } {
-  const message = e instanceof Error ? e.message : String(e);
-  const match = message.match(/\((\d+)\):\s*(\{[\s\S]+\})\s*$/);
-  if (match && match[1] && match[2]) {
-    const status = Number(match[1]);
-    try {
-      return { status, apiError: JSON.parse(match[2]), message };
-    } catch {
-      return { status, apiError: match[2], message };
-    }
-  }
-  return { message };
-}
+// Replaced by services/errors.ts → errorToResponse(). cms-api throws typed
+// errors that carry status/endpoint/method/parsed-body directly.
 
 /**
  * Pick the best primary match out of a list, given the search term or slug.
@@ -189,11 +179,11 @@ export async function getPage(
   try {
     resolution = await resolveContentId(input, graphKey);
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "resolve",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
       hint:
         "Lookup via the Optimizely Graph failed. You can retry with a contentId directly to skip the search step.",
@@ -214,11 +204,11 @@ export async function getPage(
   try {
     contentMeta = (await getContent(clientId, clientSecret, contentId)).data;
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "get-content",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
       hint: "Could not fetch the content. Check that contentId is correct.",
     };
@@ -241,11 +231,11 @@ export async function getPage(
       });
     }
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "list-versions",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
     };
   }
@@ -273,11 +263,11 @@ export async function getPage(
   try {
     version = (await getVersion(clientId, clientSecret, contentId, versionId)).data;
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "get-version",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
     };
   }

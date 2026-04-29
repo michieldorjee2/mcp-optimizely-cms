@@ -9,6 +9,7 @@ import {
   publishVersion,
   type CmsVersionSummary,
 } from "../services/cms-api.js";
+import { errorToResponse } from "../services/errors.js";
 
 export const updatePageSchema = z.object({
   contentId: z
@@ -55,28 +56,10 @@ function getVersionId(v: CmsVersionSummary | undefined | null): string | undefin
   return v._metadata?.version ?? v.version;
 }
 
-/**
- * The cms-api helpers throw `Error("... failed (NNN): {json}")`. Re-parse that
- * into a structured shape so the caller can see the API's `errors[]` array
- * directly instead of digging through a string.
- */
-function parseApiError(e: unknown): {
-  status?: number;
-  apiError?: unknown;
-  message: string;
-} {
-  const message = e instanceof Error ? e.message : String(e);
-  const match = message.match(/\((\d+)\):\s*(\{[\s\S]+\})\s*$/);
-  if (match && match[1] && match[2]) {
-    const status = Number(match[1]);
-    try {
-      return { status, apiError: JSON.parse(match[2]), message };
-    } catch {
-      return { status, apiError: match[2], message };
-    }
-  }
-  return { message };
-}
+// Replaced by services/errors.ts → errorToResponse(). cms-api now throws typed
+// errors (CmsApiError, CmsAuthError, CmsNotFoundError, CmsValidationError) that
+// carry status, endpoint, method, parsed body, and field-level errors directly
+// — no more regex parsing of message strings.
 
 export async function updatePage(
   input: UpdatePageInput,
@@ -115,11 +98,11 @@ export async function updatePage(
     try {
       existingMeta = (await getContent(clientId, clientSecret, input.contentId)).data;
     } catch (e) {
-      const parsed = parseApiError(e);
+      const parsed = errorToResponse(e);
       return {
         success: false,
         stage: "get-content",
-        error: parsed.message,
+        error: parsed.error,
         apiError: parsed.apiError,
         hint: "Could not fetch the existing content. Check that contentId is correct.",
       };
@@ -145,11 +128,11 @@ export async function updatePage(
       statuses: ["published"],
     });
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "list-versions",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
     };
   }
@@ -161,11 +144,11 @@ export async function updatePage(
         ...(input.locale ? { locales: [input.locale] } : {}),
       });
     } catch (e) {
-      const parsed = parseApiError(e);
+      const parsed = errorToResponse(e);
       return {
         success: false,
         stage: "list-versions",
-        error: parsed.message,
+        error: parsed.error,
         apiError: parsed.apiError,
       };
     }
@@ -197,11 +180,11 @@ export async function updatePage(
   try {
     base = (await getVersion(clientId, clientSecret, input.contentId, baseVersionId)).data;
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "get-version",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
     };
   }
@@ -249,11 +232,11 @@ export async function updatePage(
       properties: mergedProperties,
     });
   } catch (e) {
-    const parsed = parseApiError(e);
+    const parsed = errorToResponse(e);
     return {
       success: false,
       stage: "create-version",
-      error: parsed.message,
+      error: parsed.error,
       apiError: parsed.apiError,
       hint:
         "The CMS rejected the new version. Most common cause: one of the " +
@@ -290,13 +273,13 @@ export async function updatePage(
       );
       finalStatus = published.status ?? "published";
     } catch (e) {
-      const parsed = parseApiError(e);
+      const parsed = errorToResponse(e);
       return {
         success: false,
         stage: "publish",
         contentId: input.contentId,
         versionId,
-        error: parsed.message,
+        error: parsed.error,
         apiError: parsed.apiError,
         hint:
           "The version was created and edited but failed to publish. It is " +
