@@ -4,6 +4,15 @@ import { updatePageSchema, updatePage } from "./tools/update-page.js";
 import { listTemplatesSchema, listTemplatesHandler } from "./tools/list-templates.js";
 import { createTemplateSchema, createTemplate } from "./tools/create-template.js";
 import { getPageSchema, getPage } from "./tools/get-page.js";
+import { getSitemapSchema, getSitemap } from "./tools/get-sitemap.js";
+import {
+  getLogoSchema,
+  getLogo,
+  getBrandSchema,
+  getBrand,
+  getLogoSvgSchema,
+  getLogoSvg,
+} from "./tools/brand.js";
 
 export function createMcpServer() {
   const server = new McpServer({
@@ -198,6 +207,113 @@ export function createMcpServer() {
       }
       try {
         const result = await createTemplate(params, graphKey, clientId, clientSecret);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_sitemap",
+    [
+      "Fetch and analyze a website's XML sitemap (or sitemap index) to understand its size, structure, and freshness.",
+      "",
+      "When to use:",
+      "- Before building competitor or research pages, to see what topics/sections a site publishes and how big it is.",
+      "- To get URL counts broken down by language, path segment, or change frequency.",
+      "- Follows sitemap-index files recursively up to max_sitemaps.",
+      "",
+      "Returns: total URL count, estimated unique content pages (excluding localized variants), URLs grouped by language and by top-level path, hreflang languages declared, lastmod freshness buckets, and changefreq/priority distributions.",
+    ].join("\n"),
+    {
+      url: getSitemapSchema.shape.url,
+      follow_index: getSitemapSchema.shape.follow_index,
+      max_sitemaps: getSitemapSchema.shape.max_sitemaps,
+    },
+    async (params) => {
+      try {
+        const result = await getSitemap(params);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_logo",
+    [
+      "Get a brand's logo URL by domain via Brandfetch.",
+      "",
+      "When to use:",
+      "- You need a logo image URL (SVG or PNG) for embedding in CMS content — e.g. setting customerLogo on a competitor comparison page.",
+      "- Pick the right type: 'icon' (favicon-style square), 'logo' (full lockup), 'symbol' (mark only).",
+      "- Pick theme 'light' for use on dark backgrounds, 'dark' for light backgrounds.",
+      "",
+      "Returns: { url, format, type, theme } where url is the best matching asset.",
+    ].join("\n"),
+    {
+      domain: getLogoSchema.shape.domain,
+      theme: getLogoSchema.shape.theme,
+      type: getLogoSchema.shape.type,
+      fallback: getLogoSchema.shape.fallback,
+      w: getLogoSchema.shape.w,
+      h: getLogoSchema.shape.h,
+    },
+    async (params) => {
+      try {
+        const result = await getLogo(params);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_logo_svg",
+    [
+      "Get a brand's logo as raw SVG markup (not just a URL).",
+      "",
+      "When to use:",
+      "- You need to embed the logo as inline SVG in a page — e.g. for color-tinting via CSS, or inlining without a separate fetch.",
+      "- If Brandfetch has a native SVG, returns that directly. Otherwise traces the PNG to SVG via vtracer.",
+      "",
+      "Returns: { svg, source: 'brandfetch' | 'traced' } where svg is the raw <svg>... markup.",
+    ].join("\n"),
+    {
+      domain: getLogoSvgSchema.shape.domain,
+      theme: getLogoSvgSchema.shape.theme,
+      type: getLogoSvgSchema.shape.type,
+    },
+    async (params) => {
+      try {
+        const result = await getLogoSvg(params);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+      }
+    }
+  );
+
+  server.tool(
+    "get_brand",
+    [
+      "Get comprehensive brand data for a domain via Brandfetch: logos in every type/format, brand colors, fonts, company info, social links, and stock imagery.",
+      "",
+      "When to use:",
+      "- Building a branded page (e.g. competitor comparison, customer landing) and you want one call that gives you everything: logo URL + accent color + brand fonts.",
+      "- Use this instead of multiple get_logo + get_brand_color calls.",
+      "",
+      "Returns the full Brandfetch payload including arrays of logos, colors with hex values, fonts with names, social links, and company description.",
+    ].join("\n"),
+    {
+      domain: getBrandSchema.shape.domain,
+    },
+    async (params) => {
+      try {
+        const result = await getBrand(params);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
