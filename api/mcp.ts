@@ -4,6 +4,7 @@ import { createMcpServer } from "../src/server.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { log, newTraceId } from "../src/services/log.js";
 import { captureException } from "../src/services/sentry.js";
+import { rateLimit } from "../src/services/rate-limit.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Generate or accept a traceId per request. Clients can send their own
@@ -36,6 +37,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === "POST") {
+      // Per-IP rate limit. Generous default (60 req / min) — only catches
+      // pathological loops, not normal agent traffic. Backed by Upstash;
+      // no-ops if Redis isn't configured. Keyed by client IP so multi-
+      // tenant deployments don't share buckets.
+      const ipHeader =
+        (typeof req.headers["x-forwarded-for"] === "string" && req.headers["x-forwarded-for"]) ||
+        req.socket?.remoteAddress ||
+        "unknown";
+      const ip = ipHeader.split(",")[0]?.trim() ?? "unknown";
+      const rl = await rateLimit({ key: `mcp:${ip}`, limit: 60, windowSec: 60 });
+      res.setHeader("X-RateLimit-Limit", "60");
+      res.setHeader("X-RateLimit-Remaining", String(rl.remaining));
+      res.setHeader("X-RateLimit-Reset", String(Math.floor(rl.resetAt / 1000)));
+      if (!rl.allowed) {
+        return res.status(429).json({
+          error: "Too Many Requests",
+          message: `Rate limit exceeded — wait until ${new Date(rl.resetAt).toISOString()}.`,
+          traceId,
+        });
+      }
+
       // Stateless: every POST gets a fresh transport and server.
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined as unknown as (() => string),

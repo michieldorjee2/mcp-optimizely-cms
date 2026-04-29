@@ -2,12 +2,24 @@ import { z } from "zod";
 import { createContent } from "../services/cms-api.js";
 import { getTemplate } from "../services/template-store.js";
 import { createTemplate } from "./create-template.js";
-import { hasRedis } from "../services/env.js";
+import { env, envSafe, hasRedis } from "../services/env.js";
 import { stableHash } from "../services/hash.js";
 import { log } from "../services/log.js";
 import type { Template, TemplateProperty } from "../types.js";
 
-const DEFAULT_PARENT_ID = "3fbbcee66f954d089df0f4e62b75ca3c";
+/**
+ * Hard-coded fallback parent container id. Used when neither the caller
+ * nor DEFAULT_PARENT_ID env var supplies one. Originally the only value;
+ * now lives behind a getter so deployments can override it without code
+ * changes.
+ */
+const ROOT_CONTAINER_FALLBACK = "3fbbcee66f954d089df0f4e62b75ca3c";
+
+function resolveDefaultParentId(): string {
+  const e = envSafe();
+  if ("env" in e && e.env.DEFAULT_PARENT_ID) return e.env.DEFAULT_PARENT_ID;
+  return ROOT_CONTAINER_FALLBACK;
+}
 
 export const createPageSchema = z.object({
   contentType: z
@@ -28,9 +40,9 @@ export const createPageSchema = z.object({
     ),
   parentId: z
     .string()
-    .default(DEFAULT_PARENT_ID)
+    .default(ROOT_CONTAINER_FALLBACK)
     .describe(
-      "Content ID (32-char hex) of the parent container — the folder/section the page lives under. Defaults to the site root container. To place under a different container, fetch its id with get_page."
+      "Content ID (32-char hex) of the parent container — the folder/section the page lives under. Defaults to the site root container (override via DEFAULT_PARENT_ID env var on the deployment). To place under a different container, fetch its id with get_page."
     ),
   status: z
     .string()
@@ -281,12 +293,20 @@ export async function createPage(
     }
   }
 
+  // If the caller didn't override parentId, prefer DEFAULT_PARENT_ID env
+  // var over the hard-coded fallback. The schema default applies only when
+  // the caller omits the field entirely.
+  const container =
+    input.parentId && input.parentId !== ROOT_CONTAINER_FALLBACK
+      ? input.parentId
+      : resolveDefaultParentId();
+
   const body = {
     contentType: input.contentType,
     displayName: input.name,
     locale: input.locale,
     status: input.status || "published",
-    container: input.parentId || DEFAULT_PARENT_ID,
+    container,
     routeSegment: input.routeSegment,
     ...(Object.keys(properties).length > 0 && { properties }),
   };
