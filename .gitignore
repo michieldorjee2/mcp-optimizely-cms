@@ -9,5 +9,7 @@ dist/
 !vercel.json
 !tsconfig.json
 !package.json
+!eslint.config.js
+!eslint.config.mjs
 .vercel
 .claude/settings.local.json

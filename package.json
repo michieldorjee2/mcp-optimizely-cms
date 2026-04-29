@@ -5,7 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "echo 'Build complete'",
-    "dev": "vercel dev"
+    "dev": "vercel dev",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"api/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"api/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +26,12 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@vercel/node": "^5.6.15",
-    "typescript": "^5.9.3"
+    "eslint": "^9.36.0",
+    "eslint-config-prettier": "^9.1.0",
+    "msw": "^2.7.6",
+    "prettier": "^3.4.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.40.0",
+    "vitest": "^3.0.4"
   }
 }
