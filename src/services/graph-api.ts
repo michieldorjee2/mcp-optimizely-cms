@@ -317,30 +317,46 @@ async function runContentQuery(
     .filter((m): m is GraphContentMatch => m !== null);
 }
 
+/** Escape a string for safe inclusion in a GraphQL string literal. */
+function gqlEscape(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 /** Try to find content whose URL matches the given slug. */
 export async function findContentByRoute(
   graphKey: string,
   slug: string
 ): Promise<GraphContentMatch[]> {
-  const stripped = slug.startsWith("/") ? slug : `/${slug}`;
+  const withSlash = slug.startsWith("/") ? slug : `/${slug}`;
+  const bare = slug.replace(/^\//, "");
+  const escSlash = gqlEscape(withSlash);
+  const escBare = gqlEscape(bare);
   // routeSegment lives on IInstanceMetadata only, so it can't appear in a
-  // top-level where on _Content. Match on url.default with both exact
-  // equality and suffix.
+  // top-level where on _Content. Cast a wide net on url.default — exact,
+  // suffix, and wildcard match — so we catch both relative and absolute URL
+  // shapes.
   const where = `{ _or: [
-    { _metadata: { url: { default: { eq: "${stripped}" } } } }
-    { _metadata: { url: { default: { endsWith: "${stripped}" } } } }
+    { _metadata: { url: { default: { eq: "${escSlash}" } } } }
+    { _metadata: { url: { default: { endsWith: "${escSlash}" } } } }
+    { _metadata: { url: { default: { like: "%${escBare}" } } } }
+    { _metadata: { url: { default: { like: "%${escBare}/" } } } }
   ] }`;
   return runContentQuery(graphKey, where);
 }
 
-/** Free-text search across displayName + URL. */
+/** Free-text search across displayName + URL using `like` with wildcards. */
 export async function searchContent(
   graphKey: string,
   term: string
 ): Promise<GraphContentMatch[]> {
+  const esc = gqlEscape(term);
+  const wildcard = `%${esc}%`;
+  // `contains` only exists on SearchableStringFilterInput; regular string
+  // fields (displayName, url.default) only support eq/in/like/startsWith/
+  // endsWith — so use `like` with % wildcards for substring search.
   const where = `{ _or: [
-    { _metadata: { displayName: { contains: "${term}" } } }
-    { _metadata: { url: { default: { contains: "${term}" } } } }
+    { _metadata: { displayName: { like: "${wildcard}" } } }
+    { _metadata: { url: { default: { like: "${wildcard}" } } } }
   ] }`;
   return runContentQuery(graphKey, where);
 }
