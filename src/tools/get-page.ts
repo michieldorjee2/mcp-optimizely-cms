@@ -30,7 +30,7 @@ export const getPageSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Free-text substring match across page display names and URLs (case-insensitive). Use this when you don't know the exact slug — e.g. search='amazon' finds the page at /amazon---aem. If multiple pages match, the response is { ambiguous: true, matches: [...] } so you can pick one and re-call with contentId."
+      "Free-text substring match across page display names and URLs (case-insensitive). Use this when you don't know the exact slug — e.g. search='Amazon' finds /amazon. If multiple pages match (e.g. 'Amazon - AEM', 'Amazon - Sitecore'), the tool picks the best one and surfaces the others as `alternatives` in the response — so the response shape stays the same as a single-result lookup."
     ),
   locale: z
     .string()
@@ -74,15 +74,65 @@ function parseApiError(e: unknown): { status?: number; apiError?: unknown; messa
 }
 
 /**
- * Resolve the input to a single contentId. Returns either a single id, or a
- * list of candidate matches that the caller can pick from.
+ * Pick the best primary match out of a list, given the search term or slug.
+ * Heuristic, in priority order:
+ *   1. URL or slug exactly equals the input
+ *   2. displayName lowercased equals the input lowercased
+ *   3. URL or slug starts with the input (more specific = closer)
+ *   4. Shortest URL wins (least-qualified is usually the "main" page)
+ *   5. Fall back to the first item (Graph's relevance order).
+ */
+function pickPrimary(
+  matches: GraphContentMatch[],
+  needle: string
+): GraphContentMatch {
+  if (matches.length === 1) return matches[0];
+
+  const term = needle.replace(/^\//, "").toLowerCase();
+  const slashy = `/${term}`;
+
+  // 1. exact URL or routeSegment match
+  const exact = matches.find(
+    (m) =>
+      m.url?.toLowerCase() === slashy ||
+      m.url?.toLowerCase() === `${slashy}/` ||
+      m.routeSegment?.toLowerCase() === term
+  );
+  if (exact) return exact;
+
+  // 2. exact displayName match
+  const nameMatch = matches.find(
+    (m) => m.displayName && m.displayName.toLowerCase() === needle.toLowerCase()
+  );
+  if (nameMatch) return nameMatch;
+
+  // 3. URL starts with the term
+  const startsWith = matches.find(
+    (m) =>
+      m.url?.toLowerCase().startsWith(slashy) ||
+      m.routeSegment?.toLowerCase().startsWith(term)
+  );
+  if (startsWith) return startsWith;
+
+  // 4. Shortest URL (most "general" page)
+  const sortedByLen = [...matches].sort(
+    (a, b) => (a.url?.length ?? Infinity) - (b.url?.length ?? Infinity)
+  );
+  return sortedByLen[0];
+}
+
+/**
+ * Resolve the input to a single contentId, plus any alternatives if the
+ * search produced multiple candidates. The caller always gets a primary
+ * page back (when something matches) — alternatives are surfaced separately
+ * so consumers that don't handle ambiguity gracefully still see a normal
+ * "single result" response shape.
  */
 async function resolveContentId(
   input: GetPageInput,
   graphKey: string | undefined
 ): Promise<
-  | { kind: "single"; contentId: string; match?: GraphContentMatch }
-  | { kind: "multiple"; matches: GraphContentMatch[] }
+  | { kind: "single"; contentId: string; match?: GraphContentMatch; alternatives?: GraphContentMatch[] }
   | { kind: "none"; reason: string }
 > {
   if (input.contentId) {
@@ -97,25 +147,31 @@ async function resolveContentId(
     };
   }
 
+  let matches: GraphContentMatch[] | undefined;
+  let needle: string | undefined;
+
   if (input.slug) {
-    const matches = await findContentByRoute(graphKey, input.slug);
-    if (matches.length === 0) return { kind: "none", reason: `No page found with slug '${input.slug}'.` };
-    if (matches.length === 1) return { kind: "single", contentId: matches[0].key, match: matches[0] };
-    // Multiple matches — prefer exact route match if there is one
-    const stripped = input.slug.startsWith("/") ? input.slug : `/${input.slug}`;
-    const exact = matches.find((m) => m.url === stripped || m.routeSegment === stripped.replace(/^\//, ""));
-    if (exact) return { kind: "single", contentId: exact.key, match: exact };
-    return { kind: "multiple", matches };
+    matches = await findContentByRoute(graphKey, input.slug);
+    needle = input.slug;
+  } else if (input.search) {
+    matches = await searchContent(graphKey, input.search);
+    needle = input.search;
+  } else {
+    return { kind: "none", reason: "Provide one of: contentId, slug, or search." };
   }
 
-  if (input.search) {
-    const matches = await searchContent(graphKey, input.search);
-    if (matches.length === 0) return { kind: "none", reason: `No pages match '${input.search}'.` };
-    if (matches.length === 1) return { kind: "single", contentId: matches[0].key, match: matches[0] };
-    return { kind: "multiple", matches };
+  if (!matches || matches.length === 0) {
+    return { kind: "none", reason: `No pages match '${needle}'.` };
   }
 
-  return { kind: "none", reason: "Provide one of: contentId, slug, or search." };
+  const primary = pickPrimary(matches, needle!);
+  const alternatives = matches.filter((m) => m.key !== primary.key);
+  return {
+    kind: "single",
+    contentId: primary.key,
+    match: primary,
+    ...(alternatives.length > 0 ? { alternatives } : {}),
+  };
 }
 
 export async function getPage(
@@ -147,17 +203,8 @@ export async function getPage(
     return { success: false, stage: "resolve", error: resolution.reason };
   }
 
-  if (resolution.kind === "multiple") {
-    return {
-      success: true,
-      ambiguous: true,
-      message:
-        "Multiple pages matched. Re-run with contentId or a more specific slug/search to pick one.",
-      matches: resolution.matches,
-    };
-  }
-
   const contentId = resolution.contentId;
+  const alternatives = resolution.alternatives;
 
   // ---------------------------------------------------------------------
   // 2. Fetch content-level metadata (routeSegment, container, etc.)
@@ -279,11 +326,15 @@ export async function getPage(
     displayName: version.displayName,
     locale: version.locale,
     status: version.status,
-    routeSegment: contentMeta.routeSegment ?? resolution.match?.routeSegment,
+    routeSegment: contentMeta.routeSegment ?? resolution.match?.routeSegment ?? version.routeSegment,
     url: resolution.match?.url,
     properties: version.properties ?? {},
     ...(schema ? { schema } : {}),
     versionsAvailable: versions.length,
     matchedVia: input.contentId ? "contentId" : input.slug ? "slug" : input.search ? "search" : undefined,
+    // When slug/search hit multiple candidates, the tool now picks a
+    // primary (best heuristic match) and surfaces the others here so the
+    // caller can re-pick by contentId if our pick was wrong.
+    ...(alternatives && alternatives.length > 0 ? { alternatives } : {}),
   };
 }

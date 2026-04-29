@@ -118,7 +118,7 @@ export function createMcpServer() {
       "- slug: Graph lookup against url.default with eq / endsWith / like wildcards.",
       "- search: Graph substring match across displayName + URL.",
       "",
-      "If a slug/search resolves to multiple pages, returns { ambiguous: true, matches: [...] } so the caller can pick one and re-call with contentId.",
+      "If a slug/search resolves to multiple pages, the tool picks the best primary match (exact slug/displayName equality first, then prefix match, then shortest URL) and surfaces the other candidates as `alternatives` in the response so the caller can re-call with contentId if our pick is wrong.",
       "",
       "Response is compact JSON (no pretty-print) with a lean schema by default — see the verbose flag if you want the full template-style schema with examples and descriptions.",
     ].join("\n"),
