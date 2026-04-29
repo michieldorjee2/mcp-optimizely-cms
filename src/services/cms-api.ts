@@ -89,6 +89,33 @@ export async function getContent(
   return { data, etag };
 }
 
+/**
+ * Same as getContent but hits /v1/content/{key}. The /v1/ surface returns
+ * the full metadata (including routeSegment) while /preview3/experimental/
+ * returns a stripped-down metadata shape. Used for routeSegment re-pinning
+ * in update_page.
+ */
+export async function getContentV1(
+  clientId: string,
+  clientSecret: string,
+  contentId: string
+): Promise<{ data: CmsContentResponse; etag: string }> {
+  const headers = await cmsHeaders(clientId, clientSecret);
+  const response = await fetch(`${CMS_API_BASE}/${CMS_API_V1}/content/${contentId}`, {
+    method: "GET",
+    headers,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Get content (v1) failed (${response.status}): ${text}`);
+  }
+
+  const etag = response.headers.get("etag") || "";
+  const data = (await response.json()) as CmsContentResponse;
+  return { data, etag };
+}
+
 export async function updateContent(
   clientId: string,
   clientSecret: string,

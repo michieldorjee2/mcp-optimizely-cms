@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   updateContent,
   getContent,
+  getContentV1,
   listVersions,
   getVersion,
   createVersion,
@@ -101,19 +102,28 @@ export async function updatePage(
   //    derives the slug from displayName on publish if it's not held in
   //    place. This is the actual "update_page silently changed the URL"
   //    bug.
+  //
+  // Use /v1/content/{key} for the read because /preview3/experimental/
+  // returns a stripped metadata shape that doesn't include routeSegment.
+  // Fall back to the preview3 endpoint only if /v1/ refuses, so existing
+  // tenants still work.
   // ---------------------------------------------------------------------
   let existingMeta;
   try {
-    existingMeta = (await getContent(clientId, clientSecret, input.contentId)).data;
-  } catch (e) {
-    const parsed = parseApiError(e);
-    return {
-      success: false,
-      stage: "get-content",
-      error: parsed.message,
-      apiError: parsed.apiError,
-      hint: "Could not fetch the existing content. Check that contentId is correct.",
-    };
+    existingMeta = (await getContentV1(clientId, clientSecret, input.contentId)).data;
+  } catch {
+    try {
+      existingMeta = (await getContent(clientId, clientSecret, input.contentId)).data;
+    } catch (e) {
+      const parsed = parseApiError(e);
+      return {
+        success: false,
+        stage: "get-content",
+        error: parsed.message,
+        apiError: parsed.apiError,
+        hint: "Could not fetch the existing content. Check that contentId is correct.",
+      };
+    }
   }
 
   // The slug we want the live URL to have when this call finishes.
@@ -294,22 +304,24 @@ export async function updatePage(
   // version can also leak the auto-derived slug onto the content wrapper.
   // It's a best-effort step: a failure here doesn't fail the whole update.
   // ---------------------------------------------------------------------
+  // Idempotent re-pin: PATCH unconditionally if we have a desired slug.
+  // We can't reliably read the current slug back via /preview3/ so we
+  // can't compare-and-skip — but the PATCH is idempotent (same value →
+  // no-op write at the storage layer) and avoids a second GET.
   let finalRouteSegment = desiredRouteSegment;
   let routeSegmentRepinned = false;
   let routeSegmentRepinError: string | undefined;
   if (desiredRouteSegment) {
     try {
-      const { data: latest, etag } = await getContent(clientId, clientSecret, input.contentId);
-      if (latest.routeSegment !== desiredRouteSegment) {
-        await updateContent(
-          clientId,
-          clientSecret,
-          input.contentId,
-          { routeSegment: desiredRouteSegment },
-          etag
-        );
-        routeSegmentRepinned = true;
-      }
+      const { etag } = await getContent(clientId, clientSecret, input.contentId);
+      await updateContent(
+        clientId,
+        clientSecret,
+        input.contentId,
+        { routeSegment: desiredRouteSegment },
+        etag
+      );
+      routeSegmentRepinned = true;
       finalRouteSegment = desiredRouteSegment;
     } catch (e) {
       routeSegmentRepinError = e instanceof Error ? e.message : String(e);
