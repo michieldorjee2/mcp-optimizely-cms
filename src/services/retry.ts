@@ -1,4 +1,5 @@
 import { isRetryable } from "./errors.js";
+import { log } from "./log.js";
 
 /**
  * Run a fetch-style operation with exponential backoff. Retries on
@@ -30,6 +31,11 @@ export async function withRetry<T>(
       const exp = baseMs * Math.pow(factor, attempt - 1);
       // Full jitter — random between 0 and the full window.
       const wait = Math.floor(Math.random() * exp);
+      log.warn("retry.scheduled", {
+        attempt,
+        waitMs: wait,
+        error: { message: e instanceof Error ? e.message : String(e) },
+      });
       options?.onRetry?.(e, attempt, wait);
       await new Promise((r) => setTimeout(r, wait));
     }

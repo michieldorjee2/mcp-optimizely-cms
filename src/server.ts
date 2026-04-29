@@ -14,7 +14,17 @@ import {
   getLogoSvg,
 } from "./tools/brand.js";
 
-export function createMcpServer() {
+export interface CreateServerOptions {
+  /**
+   * Per-request trace id, generated in api/mcp.ts. Threaded into every
+   * tool handler so error responses can include it (the agent can quote
+   * the traceId when reporting an issue, and we can grep Vercel logs by
+   * it). Optional for unit tests / local invocation.
+   */
+  traceId?: string;
+}
+
+export function createMcpServer(_opts: CreateServerOptions = {}) {
   const server = new McpServer({
     name: "optimizely-cms",
     version: "1.0.0",
