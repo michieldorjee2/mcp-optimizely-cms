@@ -79,6 +79,36 @@ interface ValidationError {
   message: string;
 }
 
+/**
+ * Strip one layer of {value: …} or {properties: …} wrapping so checks below
+ * operate on the inner primitive / array.
+ *
+ * The CMS submission format wraps every field as {value: <primitive>}, every
+ * component as {properties: {…}}, and every array-of-components as
+ * {value: [{properties: {…}}, …]}. The validator originally read raw values
+ * directly, which meant `typeof value === "string"` was false for wrapped
+ * input — silently skipping every length/pattern/url check exactly when the
+ * agent was actually using the format the API requires.
+ */
+function unwrapValue(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const obj = v as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 1 && (keys[0] === "value" || keys[0] === "properties")) {
+    return obj[keys[0] as "value" | "properties"];
+  }
+  return v;
+}
+
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function validateProperties(
   properties: Record<string, unknown>,
   templateProps: TemplateProperty[]
@@ -86,15 +116,16 @@ function validateProperties(
   const errors: ValidationError[] = [];
 
   for (const prop of templateProps) {
-    const value = properties[prop.key];
+    const raw = properties[prop.key];
+    const value = unwrapValue(raw);
 
-    // Required check
-    if (prop.required && (value === undefined || value === null)) {
+    // Required check (against the raw — the wrapper itself counts as present).
+    if (prop.required && (raw === undefined || raw === null)) {
       errors.push({ key: prop.key, message: `Required property '${prop.key}' is missing.` });
-      continue; // skip further checks if missing
+      continue;
     }
 
-    // Skip further validation if not provided and not required
+    // Skip further validation if not provided and not required.
     if (value === undefined || value === null) continue;
 
     // Enum validation
@@ -148,6 +179,16 @@ function validateProperties(
             });
           }
         } catch { /* skip invalid regex */ }
+      }
+
+      // URL fields must be a full http(s) URL — anchor fragments like '#form'
+      // and bare paths like '/contact' would be rejected by the CMS with no
+      // useful field-level detail in the response, so catch them here.
+      if (prop.type === "url" && !isHttpUrl(value)) {
+        errors.push({
+          key: prop.key,
+          message: `'${prop.key}' is type=url but '${value}' is not a full URL. Must start with http:// or https:// (got an anchor or relative path).`,
+        });
       }
     }
   }
