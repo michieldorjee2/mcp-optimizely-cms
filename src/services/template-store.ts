@@ -1,19 +1,18 @@
 import type { Template } from "../types.js";
+import { kvCreds } from "./env.js";
 
 // In-memory fallback store (used when Redis is not configured)
 const memoryStore = new Map<string, Template>();
 
-// Try to use Upstash Redis if configured, otherwise fall back to in-memory
 function hasRedis(): boolean {
-  return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+  return kvCreds() !== null;
 }
 
 async function getRedis() {
+  const creds = kvCreds();
+  if (!creds) throw new Error("KV credentials not configured");
   const { Redis } = await import("@upstash/redis");
-  return new Redis({
-    url: process.env.KV_REST_API_URL!,
-    token: process.env.KV_REST_API_TOKEN!,
-  });
+  return new Redis({ url: creds.url, token: creds.token });
 }
 
 export async function saveTemplate(template: Template): Promise<void> {

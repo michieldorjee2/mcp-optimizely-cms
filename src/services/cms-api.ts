@@ -8,7 +8,7 @@ import {
   TokenResponseSchema,
   VersionListResponseSchema,
 } from "./schemas.js";
-import { hasRedis } from "./env.js";
+import { kvCreds } from "./env.js";
 
 const CMS_API_BASE = "https://api.cms.optimizely.com";
 const CMS_API_VERSION = "preview3/experimental";
@@ -37,13 +37,11 @@ let memoryToken: CachedToken | null = null;
 const REDIS_TOKEN_KEY = (clientId: string) => `cms:token:${clientId}`;
 
 async function readRedisToken(clientId: string): Promise<CachedToken | null> {
-  if (!hasRedis()) return null;
+  const creds = kvCreds();
+  if (!creds) return null;
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     const raw = await redis.get<CachedToken | string>(REDIS_TOKEN_KEY(clientId));
     if (!raw) return null;
     return typeof raw === "string" ? (JSON.parse(raw) as CachedToken) : (raw as CachedToken);
@@ -53,13 +51,11 @@ async function readRedisToken(clientId: string): Promise<CachedToken | null> {
 }
 
 async function writeRedisToken(clientId: string, token: CachedToken): Promise<void> {
-  if (!hasRedis()) return;
+  const creds = kvCreds();
+  if (!creds) return;
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     const ttlSeconds = Math.max(60, Math.floor((token.expiresAt - Date.now()) / 1000));
     await redis.set(REDIS_TOKEN_KEY(clientId), JSON.stringify(token), { ex: ttlSeconds });
   } catch {

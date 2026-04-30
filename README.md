@@ -67,7 +67,7 @@ for the full Zod contract):
 | `OPTIMIZELY_CMS_CLIENT_ID` | yes | OAuth client id |
 | `OPTIMIZELY_CMS_CLIENT_SECRET` | yes | OAuth client secret |
 | `OPTIMIZELY_GRAPH_KEY` | optional | Graph (Content Cloud) key — enables get_page slug/search |
-| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | strongly recommended | Upstash Redis — token cache, idempotency, rate limit, **content-type template cache**. Without these, the template cache falls back to an in-memory `Map` that is per-process, so on Vercel each cold-start Lambda starts empty and `list_page_templates` will appear to "lose" templates between calls. Set these for persistent caching across invocations and threads. |
+| `CMS_KV_REST_API_URL` / `CMS_KV_REST_API_TOKEN` (or un-prefixed `KV_REST_API_URL` / `KV_REST_API_TOKEN`) | strongly recommended | Upstash Redis — token cache, idempotency, rate limit, **content-type template cache**. The `CMS_`-prefixed names are preferred (so multiple KV bindings on the same Vercel project can be disambiguated); the un-prefixed names are accepted as a fallback. Without these, the template cache falls back to an in-memory `Map` that is per-process, so on Vercel each cold-start Lambda starts empty and `list_page_templates` will appear to "lose" templates between calls. Set these for persistent caching across invocations and threads. |
 | `BRANDFETCH_API_KEY` | optional | Brandfetch — get_brand / get_logo |
 | `MCP_AUTH_SECRET` | optional | HMAC for the OAuth shim |
 | `DEFAULT_PARENT_ID` | optional | Override the site root container id |

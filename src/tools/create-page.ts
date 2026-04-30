@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createContent } from "../services/cms-api.js";
 import { loadOrBuildTemplate } from "../services/template-loader.js";
-import { env, envSafe, hasRedis } from "../services/env.js";
+import { env, envSafe, kvCreds } from "../services/env.js";
 import { stableHash } from "../services/hash.js";
 import { log } from "../services/log.js";
 import type { Template, TemplateProperty } from "../types.js";
@@ -177,13 +177,11 @@ function idempotencyCacheKey(callerKey: string, argsHash: string): string {
 }
 
 async function readIdempotent(callerKey: string, argsHash: string): Promise<IdempotentResult | null> {
-  if (!hasRedis()) return null;
+  const creds = kvCreds();
+  if (!creds) return null;
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     const raw = await redis.get<IdempotentResult | string>(idempotencyCacheKey(callerKey, argsHash));
     if (!raw) return null;
     return typeof raw === "string" ? (JSON.parse(raw) as IdempotentResult) : (raw as IdempotentResult);
@@ -200,13 +198,11 @@ async function writeIdempotent(
   argsHash: string,
   result: IdempotentResult
 ): Promise<void> {
-  if (!hasRedis()) return;
+  const creds = kvCreds();
+  if (!creds) return;
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     await redis.set(idempotencyCacheKey(callerKey, argsHash), JSON.stringify(result), {
       ex: IDEMPOTENCY_TTL_SECONDS,
     });

@@ -16,8 +16,12 @@ import { z } from "zod";
  * Optional but feature-gating:
  *   OPTIMIZELY_GRAPH_KEY           — Graph (Content Cloud) API key for slug
  *                                    lookup, content-type introspection, etc.
- *   KV_REST_API_URL / _TOKEN       — Upstash Redis for the template store and
- *                                    OAuth token cache. Falls back to in-memory.
+ *   CMS_KV_REST_API_URL / _TOKEN   — Upstash Redis for the template store, OAuth
+ *                                    token cache, idempotency and rate-limit.
+ *                                    The un-prefixed KV_REST_API_URL / _TOKEN
+ *                                    are accepted as a fallback so existing dev
+ *                                    bindings keep working. See kvCreds().
+ *                                    Falls back to in-memory if neither set.
  *   BRANDFETCH_API_KEY             — used by get_logo / get_brand tools.
  *   MCP_AUTH_SECRET                — HMAC secret for the OAuth-shim helpers
  *                                    in src/auth.ts. Has a deterministic
@@ -32,6 +36,11 @@ const EnvSchema = z.object({
   OPTIMIZELY_CMS_CLIENT_ID: z.string().min(1, "OPTIMIZELY_CMS_CLIENT_ID is required"),
   OPTIMIZELY_CMS_CLIENT_SECRET: z.string().min(1, "OPTIMIZELY_CMS_CLIENT_SECRET is required"),
   OPTIMIZELY_GRAPH_KEY: z.string().optional(),
+  // KV credentials: Vercel/Upstash bindings vary by project — some use the
+  // un-prefixed names, others (this project) use a CMS_ prefix to disambiguate
+  // multiple stores. Both are documented; resolution lives in kvCreds() below.
+  CMS_KV_REST_API_URL: z.string().url().optional(),
+  CMS_KV_REST_API_TOKEN: z.string().optional(),
   KV_REST_API_URL: z.string().url().optional(),
   KV_REST_API_TOKEN: z.string().optional(),
   BRANDFETCH_API_KEY: z.string().optional(),
@@ -82,7 +91,24 @@ export function hasGraphKey(): boolean {
   return Boolean(env().OPTIMIZELY_GRAPH_KEY);
 }
 
+export interface KvCreds {
+  url: string;
+  token: string;
+}
+
+/**
+ * Resolve the Upstash REST credentials. Prefers the CMS_ prefixed names so
+ * deployments that bind multiple KV stores can disambiguate; falls back to the
+ * un-prefixed names for vanilla / dev setups. Reads process.env directly so it
+ * works even when the strict EnvSchema parse hasn't run.
+ */
+export function kvCreds(): KvCreds | null {
+  const url = process.env.CMS_KV_REST_API_URL ?? process.env.KV_REST_API_URL;
+  const token = process.env.CMS_KV_REST_API_TOKEN ?? process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return null;
+  return { url, token };
+}
+
 export function hasRedis(): boolean {
-  const e = env();
-  return Boolean(e.KV_REST_API_URL && e.KV_REST_API_TOKEN);
+  return kvCreds() !== null;
 }

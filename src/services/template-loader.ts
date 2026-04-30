@@ -19,9 +19,10 @@ import type { CmsContentType, Template } from "../types.js";
  *   - force=true                     → ignore cache, always rebuild.
  *
  * Persistence depends on the template store backend: Upstash Redis (set
- * KV_REST_API_URL + KV_REST_API_TOKEN) survives across Lambda invocations
- * and threads. Without those env vars, the in-memory fallback is per-process
- * and the cache effectively never hits in serverless deployments.
+ * CMS_KV_REST_API_URL + CMS_KV_REST_API_TOKEN, or the un-prefixed equivalents)
+ * survives across Lambda invocations and threads. Without those env vars, the
+ * in-memory fallback is per-process and the cache effectively never hits in
+ * serverless deployments.
  */
 export async function loadOrBuildTemplate(
   contentTypeName: string,

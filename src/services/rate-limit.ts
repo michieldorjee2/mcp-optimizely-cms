@@ -1,4 +1,4 @@
-import { hasRedis } from "./env.js";
+import { kvCreds } from "./env.js";
 import { log } from "./log.js";
 
 /**
@@ -33,15 +33,13 @@ interface RateLimitOptions {
  * first hit in the window, also set the EXPIRE so the bucket resets.
  */
 export async function rateLimit(opts: RateLimitOptions): Promise<RateLimitResult> {
-  if (!hasRedis()) {
+  const creds = kvCreds();
+  if (!creds) {
     return { allowed: true, remaining: opts.limit, resetAt: Date.now() + opts.windowSec * 1000 };
   }
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     const now = Date.now();
     const bucket = Math.floor(now / 1000 / opts.windowSec);
     const key = `ratelimit:${opts.key}:${bucket}`;

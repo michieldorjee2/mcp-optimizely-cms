@@ -1,4 +1,4 @@
-import { hasRedis } from "./env.js";
+import { kvCreds } from "./env.js";
 import { log } from "./log.js";
 
 /**
@@ -30,13 +30,11 @@ async function readCache(operation: string): Promise<ProbeResult | null> {
   const memo = memoryCache.get(operation);
   if (memo && Date.now() - memo.ts < CACHE_TTL_SECONDS * 1000) return memo;
 
-  if (!hasRedis()) return null;
+  const creds = kvCreds();
+  if (!creds) return null;
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     const raw = await redis.get<ProbeResult | string>(REDIS_KEY(operation));
     if (!raw) return null;
     const parsed = typeof raw === "string" ? (JSON.parse(raw) as ProbeResult) : (raw as ProbeResult);
@@ -49,13 +47,11 @@ async function readCache(operation: string): Promise<ProbeResult | null> {
 
 async function writeCache(operation: string, result: ProbeResult): Promise<void> {
   memoryCache.set(operation, result);
-  if (!hasRedis()) return;
+  const creds = kvCreds();
+  if (!creds) return;
   try {
     const { Redis } = await import("@upstash/redis");
-    const redis = new Redis({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    });
+    const redis = new Redis({ url: creds.url, token: creds.token });
     await redis.set(REDIS_KEY(operation), JSON.stringify(result), { ex: CACHE_TTL_SECONDS });
   } catch {
     // best-effort
