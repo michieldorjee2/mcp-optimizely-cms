@@ -112,3 +112,91 @@ export async function withTrace<T>(
     throw e;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Tool-call logging — wraps a tool handler so every invocation produces a
+// structured record of (tool, params, success/failure, duration, error).
+//
+// Many tools return failure as data (`{success: false, stage, error}`) rather
+// than throwing — so a plain try/catch wouldn't surface them. We inspect the
+// returned shape and emit a `tool.failure` warn line when success===false, so
+// these calls are greppable in Vercel logs alongside thrown errors.
+// ---------------------------------------------------------------------------
+
+// Keys whose values can blow up the log line — truncate their string form.
+const PARAM_TRUNCATE_KEYS = new Set(["propertiesJson"]);
+// Hard cap on any individual string param so a giant payload can't drown out
+// the rest of the log.
+const PARAM_MAX_LEN = 500;
+
+function summarizeParams(params: unknown): unknown {
+  if (!params || typeof params !== "object") return params;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
+    if (typeof v === "string" && (PARAM_TRUNCATE_KEYS.has(k) || v.length > PARAM_MAX_LEN)) {
+      out[k] =
+        v.length > PARAM_MAX_LEN ? `${v.slice(0, PARAM_MAX_LEN)}…(${v.length} chars)` : v;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+interface ToolFailureShape {
+  success?: boolean;
+  stage?: string;
+  error?: unknown;
+}
+
+function errorSummary(err: unknown): string | undefined {
+  if (err == null) return undefined;
+  if (typeof err === "string") return err.length > 500 ? `${err.slice(0, 500)}…` : err;
+  try {
+    const s = JSON.stringify(err);
+    return s.length > 500 ? `${s.slice(0, 500)}…` : s;
+  } catch {
+    return String(err);
+  }
+}
+
+export async function withToolLogging<T>(
+  context: { tool: string; traceId?: string; params?: unknown },
+  op: () => Promise<T>
+): Promise<T> {
+  const start = Date.now();
+  log.info("tool.start", {
+    tool: context.tool,
+    traceId: context.traceId,
+    params: summarizeParams(context.params),
+  });
+  try {
+    const result = await op();
+    const r = result as ToolFailureShape | null | undefined;
+    const durationMs = Date.now() - start;
+    if (r && typeof r === "object" && r.success === false) {
+      log.warn("tool.failure", {
+        tool: context.tool,
+        traceId: context.traceId,
+        durationMs,
+        stage: r.stage,
+        error: errorSummary(r.error),
+      });
+    } else {
+      log.info("tool.end", { tool: context.tool, traceId: context.traceId, durationMs });
+    }
+    return result;
+  } catch (e) {
+    log.error("tool.error", {
+      tool: context.tool,
+      traceId: context.traceId,
+      durationMs: Date.now() - start,
+      error: {
+        name: e instanceof Error ? e.name : undefined,
+        message: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : undefined,
+      },
+    });
+    throw e;
+  }
+}

@@ -13,6 +13,7 @@ import {
   getLogoSvgSchema,
   getLogoSvg,
 } from "./tools/brand.js";
+import { withToolLogging } from "./services/log.js";
 
 export interface CreateServerOptions {
   /**
@@ -24,7 +25,8 @@ export interface CreateServerOptions {
   traceId?: string;
 }
 
-export function createMcpServer(_opts: CreateServerOptions = {}) {
+export function createMcpServer(opts: CreateServerOptions = {}) {
+  const traceId = opts.traceId;
   const server = new McpServer({
     name: "optimizely-cms",
     version: "1.0.0",
@@ -63,7 +65,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
       }
       try {
-        const result = await createPage(params, clientId, clientSecret, graphKey);
+        const result = await withToolLogging(
+          { tool: "create_page", traceId, params },
+          () => createPage(params, clientId, clientSecret, graphKey)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -106,7 +111,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
       }
       try {
-        const result = await updatePage(params, clientId, clientSecret);
+        const result = await withToolLogging(
+          { tool: "update_page", traceId, params },
+          () => updatePage(params, clientId, clientSecret)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -149,7 +157,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
       }
       try {
-        const result = await getPage(params, clientId, clientSecret, graphKey);
+        const result = await withToolLogging(
+          { tool: "get_page", traceId, params },
+          () => getPage(params, clientId, clientSecret, graphKey)
+        );
         // Compact JSON (no pretty-print): saves ~25-35% tokens on large
         // page payloads compared to JSON.stringify(result, null, 2). The
         // agent reads it just fine.
@@ -180,7 +191,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
     },
     async (params) => {
       try {
-        const result = await listTemplatesHandler(params);
+        const result = await withToolLogging(
+          { tool: "list_page_templates", traceId, params },
+          () => listTemplatesHandler(params)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -219,7 +233,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
       }
       try {
-        const result = await createTemplate(params, graphKey, clientId, clientSecret);
+        const result = await withToolLogging(
+          { tool: "create_template", traceId, params },
+          () => createTemplate(params, graphKey, clientId, clientSecret)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -246,7 +263,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
     },
     async (params) => {
       try {
-        const result = await getSitemap(params);
+        const result = await withToolLogging(
+          { tool: "get_sitemap", traceId, params },
+          () => getSitemap(params)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -276,7 +296,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
     },
     async (params) => {
       try {
-        const result = await getLogo(params);
+        const result = await withToolLogging(
+          { tool: "get_logo", traceId, params },
+          async () => getLogo(params)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -302,7 +325,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
     },
     async (params) => {
       try {
-        const result = await getLogoSvg(params);
+        const result = await withToolLogging(
+          { tool: "get_logo_svg", traceId, params },
+          () => getLogoSvg(params)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
@@ -326,7 +352,10 @@ export function createMcpServer(_opts: CreateServerOptions = {}) {
     },
     async (params) => {
       try {
-        const result = await getBrand(params);
+        const result = await withToolLogging(
+          { tool: "get_brand", traceId, params },
+          () => getBrand(params)
+        );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
