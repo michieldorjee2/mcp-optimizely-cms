@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createContent } from "../services/cms-api.js";
+import { errorToResponse } from "../services/errors.js";
 import { loadOrBuildTemplate } from "../services/template-loader.js";
 import { env, envSafe, kvCreds } from "../services/env.js";
 import { stableHash } from "../services/hash.js";
@@ -298,7 +299,27 @@ export async function createPage(
     ...(Object.keys(properties).length > 0 && { properties }),
   };
 
-  const result = await createContent(clientId, clientSecret, body);
+  let result;
+  try {
+    result = await createContent(clientId, clientSecret, body);
+  } catch (e) {
+    // Surface the parsed CMS error (status, endpoint, apiError body, field
+    // errors) plus the body we tried to send — so the agent can spot
+    // exactly which property the CMS rejected and what it received.
+    const parsed = errorToResponse(e);
+    return {
+      success: false,
+      stage: "create",
+      error: parsed.error,
+      ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+      ...(parsed.endpoint ? { endpoint: parsed.endpoint } : {}),
+      ...(parsed.apiError ? { apiError: parsed.apiError } : {}),
+      ...(parsed.fieldErrors && parsed.fieldErrors.length > 0
+        ? { fieldErrors: parsed.fieldErrors }
+        : {}),
+      attemptedBody: body,
+    };
+  }
 
   // Stash the successful result for idempotent replay.
   if (input.idempotencyKey) {

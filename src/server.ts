@@ -14,6 +14,7 @@ import {
   getLogoSvg,
 } from "./tools/brand.js";
 import { withToolLogging } from "./services/log.js";
+import { errorToResponse } from "./services/errors.js";
 
 export interface CreateServerOptions {
   /**
@@ -72,12 +73,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -129,12 +136,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -189,12 +202,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -231,12 +250,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -284,12 +309,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -325,12 +356,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -369,12 +406,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -409,12 +452,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
@@ -447,12 +496,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        // Pull the structured shape (status, endpoint, apiError body,
+        // fieldErrors) instead of stringifying the error — otherwise a
+        // CmsValidationError comes back as just "Validation failed." with
+        // no useful detail for the agent or for log analysis.
+        const parsed = errorToResponse(err);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: String(err),
+                success: false,
+                ...parsed,
                 ...(errTrace ? { _traceId: errTrace } : {}),
               }),
             },
