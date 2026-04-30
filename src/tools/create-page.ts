@@ -164,7 +164,9 @@ function validateProperties(
 interface IdempotentResult {
   contentId: string;
   displayName?: string;
-  contentType?: string[];
+  // Preview3 surface returns a string, v1 returns string[]. Mirror the
+  // CmsContentResponse type's tolerance.
+  contentType?: string | string[];
   status?: string;
   ts: string;
 }

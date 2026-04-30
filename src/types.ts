@@ -105,7 +105,14 @@ export interface CmsContentBody {
 export interface CmsContentResponse {
   key: string;
   displayName: string;
-  contentType: string[];
+  /**
+   * /preview3/experimental/content returns the bare type name as a string,
+   * while /v1/content returns the full type ancestry as a string[]
+   * (e.g. ["CompetitorComparisonPage", "_Page", "_Content", "_Item"]).
+   * Consumers (get-page.ts) coerce to a single name; the schema accepts
+   * both via z.union().
+   */
+  contentType: string | string[];
   locale: string;
   status: string;
   /**

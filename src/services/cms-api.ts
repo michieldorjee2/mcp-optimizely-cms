@@ -229,7 +229,9 @@ export async function updateContent(
 export interface CmsVersionSummary {
   key: string;
   displayName?: string;
-  contentType?: string[];
+  // Preview3 returns string, v1 returns string[]. Consumers handle both
+  // shapes — see services/schemas.ts comment for the surface split.
+  contentType?: string | string[];
   locale?: string;
   status?: string;
   /** Some Optimizely tenants put routeSegment on the version, not the content. */

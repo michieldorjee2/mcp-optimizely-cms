@@ -51,7 +51,10 @@ export const ContentResponseSchema = z
   .object({
     key: z.string(),
     displayName: z.string().optional(),
-    contentType: z.array(z.string()).optional(),
+    // CMS returns contentType as a string from /preview3/experimental/content
+    // and as a string[] (type ancestry) from /v1/content. Accept both; consumers
+    // (e.g. get-page.ts) already coerce to a single name.
+    contentType: z.union([z.string(), z.array(z.string())]).optional(),
     locale: z.string().optional(),
     status: z.string().optional(),
     routeSegment: z.string().optional(),

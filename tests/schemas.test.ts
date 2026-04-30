@@ -39,6 +39,11 @@ describe("ContentResponseSchema", () => {
     expect(ContentResponseSchema.parse({ key: "abc" })).toMatchObject({ key: "abc" });
   });
 
+  it("accepts contentType as a plain string (preview3 surface)", () => {
+    const data = ContentResponseSchema.parse({ key: "abc", contentType: "FooPage" });
+    expect(data.contentType).toBe("FooPage");
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const data = ContentResponseSchema.parse({ key: "abc", weirdNewField: 123 });
     expect((data as Record<string, unknown>).weirdNewField).toBe(123);
