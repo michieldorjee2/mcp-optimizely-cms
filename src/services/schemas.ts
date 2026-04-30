@@ -181,8 +181,15 @@ export const GraphIntrospectionResponseSchema = z
                   })
                   .passthrough()
               )
+              .nullable()
               .optional(),
-            possibleTypes: z.array(z.object({ name: z.string() }).passthrough()).optional(),
+            // GraphQL returns possibleTypes: null for OBJECT types (it's a
+            // UNION / INTERFACE concept) — accept null so the parse doesn't
+            // reject every introspection of a regular content-type object.
+            possibleTypes: z
+              .array(z.object({ name: z.string() }).passthrough())
+              .nullable()
+              .optional(),
           })
           .passthrough()
           .nullable(),
