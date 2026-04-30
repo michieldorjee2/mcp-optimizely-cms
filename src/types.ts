@@ -87,6 +87,13 @@ export interface Template {
    * compat with templates created before this field existed.
    */
   schemaHash?: string;
+  /**
+   * Version of the template-builder format. Bumped whenever the example /
+   * itemShape encoding changes in a way that would mislead the agent (e.g.
+   * raw vs wrapped examples). loadOrBuildTemplate treats a version
+   * mismatch the same as a schema-drift hit — rebuild and overwrite.
+   */
+  formatVersion?: number;
 }
 
 // Keep old TemplateField as alias for backward compat in create-page validation

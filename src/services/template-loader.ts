@@ -1,5 +1,5 @@
 import { getContentType } from "./cms-api.js";
-import { buildPropertiesFromContentType } from "./template-builder.js";
+import { buildPropertiesFromContentType, TEMPLATE_FORMAT_VERSION } from "./template-builder.js";
 import { stableHash } from "./hash.js";
 import { getTemplate, saveTemplate } from "./template-store.js";
 import { log } from "./log.js";
@@ -35,7 +35,14 @@ export async function loadOrBuildTemplate(
     ? null
     : await getTemplate(contentTypeName).catch(() => null);
 
-  if (cached?.schemaHash && graphKey) {
+  // A cached template with a stale formatVersion is treated the same as a
+  // schema-hash mismatch — rebuild + overwrite. This is what kicks the
+  // wrapped-example refresh in once the new code ships, without needing a
+  // manual force=true sweep across every cached type.
+  const formatStale =
+    cached !== null && (cached.formatVersion ?? 1) !== TEMPLATE_FORMAT_VERSION;
+
+  if (cached?.schemaHash && graphKey && !formatStale) {
     try {
       const liveCt = await getContentType(clientId, clientSecret, contentTypeName);
       const liveHash = stableHash(liveCt.properties ?? {});
@@ -50,6 +57,24 @@ export async function loadOrBuildTemplate(
       return await buildAndSave(contentTypeName, liveCt, graphKey);
     } catch (e) {
       log.warn("template_loader.drift_check_failed", {
+        contentType: contentTypeName,
+        error: { message: e instanceof Error ? e.message : String(e) },
+      });
+      return cached;
+    }
+  }
+
+  if (formatStale && graphKey) {
+    log.warn("template_loader.format_version_stale", {
+      contentType: contentTypeName,
+      cachedFormatVersion: cached?.formatVersion ?? 1,
+      currentFormatVersion: TEMPLATE_FORMAT_VERSION,
+    });
+    try {
+      const liveCt = await getContentType(clientId, clientSecret, contentTypeName);
+      return await buildAndSave(contentTypeName, liveCt, graphKey);
+    } catch (e) {
+      log.warn("template_loader.format_refresh_failed", {
         contentType: contentTypeName,
         error: { message: e instanceof Error ? e.message : String(e) },
       });
@@ -92,6 +117,7 @@ async function buildAndSave(
     contentReferences,
     createdAt: new Date().toISOString(),
     schemaHash: stableHash(liveCt.properties ?? {}),
+    formatVersion: TEMPLATE_FORMAT_VERSION,
   };
   await saveTemplate(template);
   return template;

@@ -1,6 +1,59 @@
 import type { CmsContentType, CmsContentTypeProperty, TemplateProperty } from "../types.js";
 import { introspectContentType, clearTypeCache } from "./graph-api.js";
 
+/**
+ * Bump whenever the example / itemShape encoding changes in a way that would
+ * mislead the agent if it copied a stale cached template. v2 switched
+ * `example` from raw values to the wrapped CMS submission shape ({value:…},
+ * {properties:{…}}, {value:[{properties:{…}}]}). loadOrBuildTemplate treats
+ * a mismatch the same as drift — rebuild + overwrite.
+ */
+export const TEMPLATE_FORMAT_VERSION = 2;
+
+// ---------------------------------------------------------------------------
+// Wrap raw example values into the CMS submission shape so the agent can
+// copy the example directly into propertiesJson without composing the
+// wrapping rules. The CMS API expects:
+//   - primitive  → {"value": <primitive>}
+//   - component  → {"properties": {<key>: {"value": <primitive>}, …}}
+//   - object[]   → {"value": [{"properties": {<key>: {"value": …}}}, …]}
+//   - scalar[]   → {"value": [<scalar>, …]}
+// contentId / contentId[] examples stay raw — they're already string IDs and
+// the CMS accepts them as-is (no wrapping required for content references).
+// ---------------------------------------------------------------------------
+
+function wrapComponentObject(raw: Record<string, unknown>): { properties: Record<string, unknown> } {
+  const properties: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    properties[k] = { value: v };
+  }
+  return { properties };
+}
+
+function wrapExample(rawExample: unknown, type: string): unknown {
+  // Content references stay raw — they're string IDs.
+  if (type === "contentId" || type === "contentId[]") return rawExample;
+
+  // Single component → {properties: {…}}
+  if (type === "object" && rawExample && typeof rawExample === "object" && !Array.isArray(rawExample)) {
+    return wrapComponentObject(rawExample as Record<string, unknown>);
+  }
+
+  // Array of components → {value: [{properties: {…}}, …]}
+  if (type === "object[]" && Array.isArray(rawExample)) {
+    return {
+      value: rawExample.map((item) =>
+        item && typeof item === "object" && !Array.isArray(item)
+          ? wrapComponentObject(item as Record<string, unknown>)
+          : item
+      ),
+    };
+  }
+
+  // Scalars + scalar arrays + URL types — single {value: …} wrapper.
+  return { value: rawExample };
+}
+
 // ---------------------------------------------------------------------------
 // CMS property type → flat template type mapping
 // ---------------------------------------------------------------------------
@@ -131,13 +184,16 @@ export async function buildPropertyFromCms(
     // Array of components — get sub-type shape from Graph
     if (itemType === "component" && cmsProp.items.contentType) {
       clearTypeCache();
-      const { shape, example } = await buildItemShapeFromGraph(graphKey, cmsProp.items.contentType);
+      const { shape, example: rawExample } = await buildItemShapeFromGraph(graphKey, cmsProp.items.contentType);
       const shapeDesc = Object.entries(shape).map(([k, v]) => `${k} (${v})`).join(", ");
       return {
         prop: {
           key, label, type: "object[]", required,
-          description: buildDescription(label, cmsProp, [`Each item has: ${shapeDesc}.`]),
-          example: [example],
+          description: buildDescription(label, cmsProp, [
+            `Each item has: ${shapeDesc}.`,
+            "Submit each item wrapped as {properties: {<field>: {value: <primitive>}, …}} inside the outer {value: [...]}.",
+          ]),
+          example: wrapExample([rawExample], "object[]"),
           itemShape: shape,
           ...(cmsProp.minItems != null && { minItems: cmsProp.minItems }),
           ...(cmsProp.maxItems != null && { maxItems: cmsProp.maxItems }),
@@ -152,7 +208,7 @@ export async function buildPropertyFromCms(
       prop: {
         key, label, type: `${mapped.type}[]`, required,
         description: buildDescription(label, cmsProp),
-        example: [mapped.example],
+        example: wrapExample([mapped.example], `${mapped.type}[]`),
         ...(cmsProp.minItems != null && { minItems: cmsProp.minItems }),
         ...(cmsProp.maxItems != null && { maxItems: cmsProp.maxItems }),
       },
@@ -163,13 +219,16 @@ export async function buildPropertyFromCms(
   // --- Component (single object) ---
   if (cmsProp.type === "component" && cmsProp.contentType) {
     clearTypeCache();
-    const { shape, example } = await buildItemShapeFromGraph(graphKey, cmsProp.contentType);
+    const { shape, example: rawExample } = await buildItemShapeFromGraph(graphKey, cmsProp.contentType);
     const shapeDesc = Object.entries(shape).map(([k, v]) => `${k} (${v})`).join(", ");
     return {
       prop: {
         key, label, type: "object", required,
-        description: buildDescription(label, cmsProp, [`Shape: ${shapeDesc}.`]),
-        example,
+        description: buildDescription(label, cmsProp, [
+          `Shape: ${shapeDesc}.`,
+          "Submit as {properties: {<field>: {value: <primitive>}, …}}.",
+        ]),
+        example: wrapExample(rawExample, "object"),
         itemShape: shape,
       },
       isContentRef: false,
@@ -191,10 +250,14 @@ export async function buildPropertyFromCms(
 
   // --- Simple scalar types ---
   const mapped = TYPE_MAP[cmsProp.type] || { type: "string", example: "" };
+  const isUrlType = mapped.type === "url";
+  const extraHints = isUrlType
+    ? ["Must be a full URL starting with http:// or https://. Anchor fragments like '#form' and bare paths are rejected."]
+    : [];
   const prop: TemplateProperty = {
     key, label, type: mapped.type, required,
-    description: buildDescription(label, cmsProp),
-    example: mapped.example,
+    description: buildDescription(label, cmsProp, extraHints),
+    example: wrapExample(mapped.example, mapped.type),
   };
 
   if (cmsProp.minLength != null) prop.minLength = cmsProp.minLength;
