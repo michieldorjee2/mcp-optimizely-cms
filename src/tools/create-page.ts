@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { createContent, getContentType } from "../services/cms-api.js";
-import { getTemplate } from "../services/template-store.js";
-import { createTemplate } from "./create-template.js";
+import { createContent } from "../services/cms-api.js";
+import { loadOrBuildTemplate } from "../services/template-loader.js";
 import { env, envSafe, hasRedis } from "../services/env.js";
 import { stableHash } from "../services/hash.js";
 import { log } from "../services/log.js";
@@ -263,58 +262,14 @@ export async function createPage(
     }
   }
 
-  // Try to load existing template, or auto-create one from CMS content type API.
-  let template: Template | null = await getTemplate(input.contentType).catch(() => null);
-
-  // Drift detection: if we have a cached template AND it has a schemaHash,
-  // fetch the live content-type definition and compare. Mismatch → rebuild.
-  // This catches the case where the CMS content type changed since we last
-  // cached it (a renamed property, new required field, tightened constraint).
-  if (template?.schemaHash && graphKey) {
-    try {
-      const liveCt = await getContentType(clientId, clientSecret, input.contentType);
-      const liveHash = stableHash(liveCt.properties ?? {});
-      if (liveHash !== template.schemaHash) {
-        log.warn("create_page.template_drift_detected", {
-          contentType: input.contentType,
-          cachedHash: template.schemaHash,
-          liveHash,
-        });
-        const refresh = await createTemplate(
-          { contentTypeName: input.contentType, force: true },
-          graphKey,
-          clientId,
-          clientSecret
-        );
-        if (refresh.success) {
-          template = (await getTemplate(input.contentType).catch(() => null)) ?? template;
-        }
-      }
-    } catch (e) {
-      // Drift check is best-effort. If the content-type GET fails we proceed
-      // with the cached template — better validation than no validation.
-      log.warn("create_page.template_drift_check_failed", {
-        contentType: input.contentType,
-        error: { message: e instanceof Error ? e.message : String(e) },
-      });
-    }
-  }
-
-  if (!template && graphKey) {
-    try {
-      const result = await createTemplate(
-        { contentTypeName: input.contentType, force: false },
-        graphKey,
-        clientId,
-        clientSecret
-      );
-      if (result.success) {
-        template = await getTemplate(input.contentType).catch(() => null);
-      }
-    } catch {
-      // If auto-introspection fails, proceed without template
-    }
-  }
+  // Pull the template from cache, or build + persist if missing/stale.
+  // Drift detection is centralized in loadOrBuildTemplate.
+  const template: Template | null = await loadOrBuildTemplate(
+    input.contentType,
+    graphKey,
+    clientId,
+    clientSecret
+  ).catch(() => null);
 
   // Validate against template
   if (template) {

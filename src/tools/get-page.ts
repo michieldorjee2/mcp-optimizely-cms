@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   getContent,
-  getContentType,
   listVersions,
   getVersion,
   type CmsVersionSummary,
@@ -11,7 +10,7 @@ import {
   searchContent,
   type GraphContentMatch,
 } from "../services/graph-api.js";
-import { buildPropertiesFromContentType } from "../services/template-builder.js";
+import { loadOrBuildTemplate } from "../services/template-loader.js";
 import { errorToResponse } from "../services/errors.js";
 
 export const getPageSchema = z.object({
@@ -284,25 +283,29 @@ export async function getPage(
   let schema: { properties: unknown[]; contentReferences: string[] } | undefined;
   if (input.includeSchema && graphKey && contentTypeName) {
     try {
-      const ct = await getContentType(clientId, clientSecret, contentTypeName);
-      const built = await buildPropertiesFromContentType(ct, graphKey);
+      // Centralized loader: cache hit → no introspection; drift → rebuild;
+      // miss → build + persist. Subsequent get_page calls on the same type
+      // skip the CMS + Graph round trip entirely.
+      const built = await loadOrBuildTemplate(
+        contentTypeName,
+        graphKey,
+        clientId,
+        clientSecret
+      );
 
-      // Lean view: drop the fields that duplicate information already
-      // visible in the current property values (example, itemShape) or in
-      // structured fields right next to them (label, description). The
-      // agent can read the actual shape from `properties` and the validation
-      // rules from `required` / `min*` / `max*` / `pattern` / `enumValues`.
-      const properties = input.verbose
-        ? built.properties
-        : built.properties.map((p) => {
-            const { label: _label, description: _desc, example: _ex, itemShape: _is, ...rest } = p;
-            return rest;
-          });
+      if (built) {
+        const properties = input.verbose
+          ? built.properties
+          : built.properties.map((p) => {
+              const { label: _label, description: _desc, example: _ex, itemShape: _is, ...rest } = p;
+              return rest;
+            });
 
-      schema = {
-        properties,
-        contentReferences: built.contentReferences,
-      };
+        schema = {
+          properties,
+          contentReferences: built.contentReferences,
+        };
+      }
     } catch {
       // Best-effort: if schema lookup fails (e.g. unknown type), skip it
       // rather than failing the whole call.

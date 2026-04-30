@@ -290,7 +290,7 @@ async function runContentQuery(
         displayName: m.displayName,
         types: m.types,
         locale: m.locale,
-        url: m.url?.default ?? m.url?.hierarchical,
+        url: m.url?.default ?? m.url?.hierarchical ?? undefined,
         routeSegment: m.routeSegment,
       } as GraphContentMatch;
     })

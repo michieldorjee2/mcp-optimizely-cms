@@ -1,9 +1,6 @@
 import { z } from "zod";
-import { getContentType } from "../services/cms-api.js";
-import { saveTemplate, getTemplate, deleteTemplate } from "../services/template-store.js";
-import { buildPropertiesFromContentType } from "../services/template-builder.js";
-import { stableHash } from "../services/hash.js";
-import type { Template } from "../types.js";
+import { getTemplate } from "../services/template-store.js";
+import { loadOrBuildTemplate } from "../services/template-loader.js";
 
 export const createTemplateSchema = z.object({
   contentTypeName: z
@@ -41,39 +38,20 @@ export async function createTemplate(
     };
   }
 
-  if (existing && input.force) {
-    await deleteTemplate(input.contentTypeName).catch(() => {});
-  }
-
-  // Fetch content type definition from CMS REST API (has accurate validation rules)
-  const contentType = await getContentType(clientId, clientSecret, input.contentTypeName);
-  if (!contentType.properties || Object.keys(contentType.properties).length === 0) {
-    return {
-      success: false,
-      error: `Content type '${input.contentTypeName}' has no properties. Check the type name.`,
-    };
-  }
-
-  const { properties, contentReferences } = await buildPropertiesFromContentType(
-    contentType,
-    graphKey
+  const template = await loadOrBuildTemplate(
+    input.contentTypeName,
+    graphKey,
+    clientId,
+    clientSecret,
+    { force: input.force }
   );
 
-  // Hash the content-type definition itself (not our derived template) so
-  // drift detection compares apples to apples — a future fetch hashes the
-  // raw response from CMS and compares to this value.
-  const schemaHash = stableHash(contentType.properties ?? {});
-
-  const template: Template = {
-    name: input.contentTypeName,
-    contentType: input.contentTypeName,
-    properties,
-    contentReferences,
-    createdAt: new Date().toISOString(),
-    schemaHash,
-  };
-
-  await saveTemplate(template);
+  if (!template) {
+    return {
+      success: false,
+      error: `Content type '${input.contentTypeName}' has no properties or could not be introspected. Check the type name.`,
+    };
+  }
 
   return {
     success: true,

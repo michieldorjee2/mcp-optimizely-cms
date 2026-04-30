@@ -134,10 +134,11 @@ export const GraphContentMatchSchema = z
         locale: z.string().optional(),
         url: z
           .object({
-            default: z.string().optional(),
-            hierarchical: z.string().optional(),
+            default: z.string().nullable().optional(),
+            hierarchical: z.string().nullable().optional(),
           })
           .passthrough()
+          .nullable()
           .optional(),
         routeSegment: z.string().optional(),
       })

@@ -33,8 +33,12 @@ sharing across cold starts, and idempotency / rate-limit storage.
   (free-text). Returns identity + current values + lean schema in one call.
   Multi-match searches pick a primary and surface the rest as `alternatives`.
 - **`list_page_templates` / `create_template`** — content-type schema
-  cache. create_template stores a `schemaHash`; create_page detects drift
-  and refreshes automatically.
+  cache. Templates are populated automatically the first time a content
+  type is touched by `get_page`, `create_page`, or `create_template`, then
+  reused on every subsequent call. Drift is detected via `schemaHash` and
+  the template is rebuilt only when the underlying CMS type actually
+  changes. Set Upstash (see env vars below) for persistence across Lambda
+  invocations and MCP sessions.
 - **`get_sitemap`** — fetch + analyse a website XML sitemap.
 - **`get_logo` / `get_logo_svg` / `get_brand`** — Brandfetch wrappers.
 
@@ -63,7 +67,7 @@ for the full Zod contract):
 | `OPTIMIZELY_CMS_CLIENT_ID` | yes | OAuth client id |
 | `OPTIMIZELY_CMS_CLIENT_SECRET` | yes | OAuth client secret |
 | `OPTIMIZELY_GRAPH_KEY` | optional | Graph (Content Cloud) key — enables get_page slug/search |
-| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | optional | Upstash Redis — token cache, idempotency, rate limit, drift detection |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | strongly recommended | Upstash Redis — token cache, idempotency, rate limit, **content-type template cache**. Without these, the template cache falls back to an in-memory `Map` that is per-process, so on Vercel each cold-start Lambda starts empty and `list_page_templates` will appear to "lose" templates between calls. Set these for persistent caching across invocations and threads. |
 | `BRANDFETCH_API_KEY` | optional | Brandfetch — get_brand / get_logo |
 | `MCP_AUTH_SECRET` | optional | HMAC for the OAuth shim |
 | `DEFAULT_PARENT_ID` | optional | Override the site root container id |
