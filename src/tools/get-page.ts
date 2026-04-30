@@ -11,7 +11,7 @@ import {
   type GraphContentMatch,
 } from "../services/graph-api.js";
 import { loadOrBuildTemplate } from "../services/template-loader.js";
-import { errorToResponse } from "../services/errors.js";
+import { CmsNotFoundError, errorToResponse } from "../services/errors.js";
 
 export const getPageSchema = z.object({
   contentId: z
@@ -49,6 +49,12 @@ export const getPageSchema = z.object({
     .default(false)
     .describe(
       "If true, include redundant schema fields (example values, English descriptions, labels, itemShape) for human inspection. Default false keeps the response compact since the current property values already demonstrate the expected shape — saves ~30% tokens on large pages."
+    ),
+  existsOnly: z
+    .boolean()
+    .default(false)
+    .describe(
+      "If true, return only whether a page exists ({ success, exists, contentId?, displayName?, url?, alternatives? }) and skip fetching versions, properties, and schema. Use this for cheap existence checks (e.g. 'do we already have a page for this company?') when you don't need the page contents. For slug/search, the Graph match is used directly — no CMS round-trips. For contentId, one getContent call confirms existence."
     ),
 });
 
@@ -123,7 +129,7 @@ async function resolveContentId(
   graphKey: string | undefined
 ): Promise<
   | { kind: "single"; contentId: string; match?: GraphContentMatch; alternatives?: GraphContentMatch[] }
-  | { kind: "none"; reason: string }
+  | { kind: "none"; reason: string; notFound?: boolean }
 > {
   if (input.contentId) {
     return { kind: "single", contentId: input.contentId };
@@ -151,7 +157,7 @@ async function resolveContentId(
   }
 
   if (!matches || matches.length === 0 || !needle) {
-    return { kind: "none", reason: `No pages match '${needle ?? ""}'.` };
+    return { kind: "none", reason: `No pages match '${needle ?? ""}'.`, notFound: true };
   }
 
   const primary = pickPrimary(matches as [GraphContentMatch, ...GraphContentMatch[]], needle);
@@ -190,11 +196,30 @@ export async function getPage(
   }
 
   if (resolution.kind === "none") {
+    // existsOnly: a "no matches" outcome from slug/search is a legitimate
+    // answer (the page doesn't exist), not a failure. Config/usage errors
+    // (missing Graph key, missing inputs) still come back as failures.
+    if (input.existsOnly && resolution.notFound) {
+      return { success: true, exists: false };
+    }
     return { success: false, stage: "resolve", error: resolution.reason };
   }
 
   const contentId = resolution.contentId;
   const alternatives = resolution.alternatives;
+
+  // existsOnly via slug/search: the Graph already gave us a primary match
+  // with displayName + url. No CMS round-trips needed — return immediately.
+  if (input.existsOnly && resolution.match) {
+    return {
+      success: true,
+      exists: true,
+      contentId,
+      ...(resolution.match.displayName ? { displayName: resolution.match.displayName } : {}),
+      ...(resolution.match.url ? { url: resolution.match.url } : {}),
+      ...(alternatives && alternatives.length > 0 ? { alternatives } : {}),
+    };
+  }
 
   // ---------------------------------------------------------------------
   // 2. Fetch content-level metadata (routeSegment, container, etc.)
@@ -203,6 +228,11 @@ export async function getPage(
   try {
     contentMeta = (await getContent(clientId, clientSecret, contentId)).data;
   } catch (e) {
+    // existsOnly via contentId: a 404 means "doesn't exist" — return that
+    // as a positive answer rather than a failure.
+    if (input.existsOnly && e instanceof CmsNotFoundError) {
+      return { success: true, exists: false };
+    }
     const parsed = errorToResponse(e);
     return {
       success: false,
@@ -210,6 +240,18 @@ export async function getPage(
       error: parsed.error,
       apiError: parsed.apiError,
       hint: "Could not fetch the content. Check that contentId is correct.",
+    };
+  }
+
+  // existsOnly via contentId: getContent succeeded → the page exists. Skip
+  // the version + schema fetches.
+  if (input.existsOnly) {
+    return {
+      success: true,
+      exists: true,
+      contentId,
+      ...(contentMeta.displayName ? { displayName: contentMeta.displayName } : {}),
+      ...(contentMeta.routeSegment ? { routeSegment: contentMeta.routeSegment } : {}),
     };
   }
 

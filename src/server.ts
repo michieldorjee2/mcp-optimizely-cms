@@ -175,6 +175,8 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       "If a slug/search resolves to multiple pages, the tool picks the best primary match (exact slug/displayName equality first, then prefix match, then shortest URL) and surfaces the other candidates as `alternatives` in the response so the caller can re-call with contentId if our pick is wrong.",
       "",
       "Response is compact JSON (no pretty-print) with a lean schema by default — see the verbose flag if you want the full template-style schema with examples and descriptions.",
+      "",
+      "Cheap existence check: pass existsOnly=true to get just { exists: true|false, contentId?, displayName?, url? } without fetching versions, properties, or schema. Useful for 'do we already have a page for this company?' lookups that would otherwise bloat the context with the full page payload.",
     ].join("\n"),
     {
       contentId: getPageSchema.shape.contentId,
@@ -183,6 +185,7 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       locale: getPageSchema.shape.locale,
       includeSchema: getPageSchema.shape.includeSchema,
       verbose: getPageSchema.shape.verbose,
+      existsOnly: getPageSchema.shape.existsOnly,
     },
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
