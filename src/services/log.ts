@@ -147,6 +147,9 @@ interface ToolFailureShape {
   success?: boolean;
   stage?: string;
   error?: unknown;
+  fieldErrors?: Array<{ field?: string; detail?: string }>;
+  status?: number;
+  endpoint?: string;
 }
 
 function errorSummary(err: unknown): string | undefined {
@@ -175,13 +178,27 @@ export async function withToolLogging<T>(
     const r = result as ToolFailureShape | null | undefined;
     const durationMs = Date.now() - start;
     if (r && typeof r === "object" && r.success === false) {
+      // Hoist stage / fieldErrors / status to top-level fields so Vercel's
+      // CLI bulk view (which only shows one log line per request) still
+      // surfaces the diagnostic detail. Otherwise it'd be buried inside the
+      // truncated `error` blob and only visible to live streaming.
       log.warn("tool.failure", {
         tool: context.tool,
         traceId: context.traceId,
         durationMs,
         stage: r.stage,
+        status: r.status,
+        endpoint: r.endpoint,
         error: errorSummary(r.error),
+        ...(r.fieldErrors && r.fieldErrors.length > 0 ? { fieldErrors: r.fieldErrors } : {}),
       });
+      // Inject the traceId into the response so the agent (which often
+      // doesn't surface response headers) can quote it back when reporting
+      // the error. Only mutate plain failure-as-data objects, never overwrite
+      // an existing _traceId.
+      if (context.traceId && !("_traceId" in (r as object))) {
+        (r as Record<string, unknown>)._traceId = context.traceId;
+      }
     } else {
       log.info("tool.end", { tool: context.tool, traceId: context.traceId, durationMs });
     }
@@ -197,6 +214,11 @@ export async function withToolLogging<T>(
         stack: e instanceof Error ? e.stack : undefined,
       },
     });
+    // Annotate the error so the outer handler (server.ts catch block) can
+    // include the traceId in the response body without re-threading state.
+    if (context.traceId && e instanceof Error) {
+      (e as Error & { traceId?: string }).traceId = context.traceId;
+    }
     throw e;
   }
 }

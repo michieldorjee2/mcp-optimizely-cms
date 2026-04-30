@@ -71,7 +71,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -117,7 +128,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -166,7 +188,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         // agent reads it just fine.
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -197,7 +230,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -239,7 +283,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -269,7 +324,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -302,7 +368,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -331,7 +408,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );
@@ -358,7 +446,18 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: String(err) }) }] };
+        const errTrace = (err as Error & { traceId?: string }).traceId ?? traceId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: String(err),
+                ...(errTrace ? { _traceId: errTrace } : {}),
+              }),
+            },
+          ],
+        };
       }
     }
   );

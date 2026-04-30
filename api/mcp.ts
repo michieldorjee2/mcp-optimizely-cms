@@ -66,11 +66,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const server = createMcpServer({ traceId });
       await server.connect(transport);
 
+      // Pull both the JSON-RPC method (initialize / tools/call / tools/list)
+      // and — when it's a tools/call — the actual tool name from params.
+      // Otherwise the request line says "tools/call" for every tool, and the
+      // tool name only appears in tool.start, which Vercel's CLI bulk view
+      // collapses out of the visible output.
+      const body = req.body as
+        | { method?: string; params?: { name?: string } }
+        | undefined;
+      const jsonrpcMethod = body?.method ?? "unknown";
+      const toolName = jsonrpcMethod === "tools/call" ? body?.params?.name : undefined;
       log.info("mcp.request", {
         traceId,
         method: req.method,
-        method_jsonrpc:
-          (req.body as { method?: string } | undefined)?.method ?? "unknown",
+        method_jsonrpc: jsonrpcMethod,
+        ...(toolName ? { tool: toolName } : {}),
       });
 
       await transport.handleRequest(
