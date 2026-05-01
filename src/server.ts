@@ -182,6 +182,8 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       "Response is compact JSON (no pretty-print) with a lean schema by default — see the verbose flag if you want the full template-style schema with examples and descriptions.",
       "",
       "Cheap existence check: pass existsOnly=true to get just { exists: true|false, contentId?, displayName?, url? } without fetching versions, properties, or schema. Useful for 'do we already have a page for this company?' lookups that would otherwise bloat the context with the full page payload.",
+      "",
+      "Not-found is a definitive answer, not a tool failure: when the slug / search / contentId you ask for doesn't exist, the response is { success: true, exists: false, message } regardless of whether existsOnly was set. Don't retry on this — the CMS just doesn't have a page matching what you asked. success: false is reserved for actual tool problems (missing Graph key, network errors, etc.).",
     ].join("\n"),
     {
       contentId: getPageSchema.shape.contentId,

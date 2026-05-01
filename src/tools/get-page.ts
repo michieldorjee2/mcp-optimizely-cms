@@ -196,11 +196,22 @@ export async function getPage(
   }
 
   if (resolution.kind === "none") {
-    // existsOnly: a "no matches" outcome from slug/search is a legitimate
-    // answer (the page doesn't exist), not a failure. Config/usage errors
-    // (missing Graph key, missing inputs) still come back as failures.
-    if (input.existsOnly && resolution.notFound) {
-      return { success: true, exists: false };
+    // A "no matches" outcome from slug/search is a definitive answer to
+    // the question "does this page exist?", not a tool failure. Returning
+    // success: false here was making agents treat normal "not found"
+    // results as errors and retry the call — production logs caught
+    // 3× same trace from one agent loop on a missing search term.
+    // Config/usage errors (missing Graph key, missing inputs) still come
+    // back as failures via the !notFound branch.
+    if (resolution.notFound) {
+      return {
+        success: true,
+        exists: false,
+        ...(input.contentId ? { contentId: input.contentId } : {}),
+        ...(input.slug ? { slug: input.slug } : {}),
+        ...(input.search ? { search: input.search } : {}),
+        message: resolution.reason,
+      };
     }
     return { success: false, stage: "resolve", error: resolution.reason };
   }
@@ -228,10 +239,17 @@ export async function getPage(
   try {
     contentMeta = (await getContent(clientId, clientSecret, contentId)).data;
   } catch (e) {
-    // existsOnly via contentId: a 404 means "doesn't exist" — return that
-    // as a positive answer rather than a failure.
-    if (input.existsOnly && e instanceof CmsNotFoundError) {
-      return { success: true, exists: false };
+    // 404 via contentId means "doesn't exist" — that's a definitive answer
+    // to the question, not a tool failure. Same reasoning as the slug/search
+    // notFound path above: returning success: false made agents retry valid
+    // negative answers.
+    if (e instanceof CmsNotFoundError) {
+      return {
+        success: true,
+        exists: false,
+        contentId,
+        message: `No content found with id '${contentId}'.`,
+      };
     }
     const parsed = errorToResponse(e);
     return {
