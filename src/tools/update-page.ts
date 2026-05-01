@@ -217,7 +217,13 @@ export async function updatePage(
       clientSecret
     ).catch(() => null);
     if (template) {
-      const result = normalizeProperties(overrides, template.properties);
+      // /v1/.../versions stores and accepts primitives wrapped as
+      // {value: <primitive>}. base.properties (which we merge into) come
+      // from /v1/ already wrapped, so we wrap caller overrides too for
+      // shape consistency across the merged payload.
+      const result = normalizeProperties(overrides, template.properties, {
+        wrapPrimitivesAsValue: true,
+      });
       overrides = result.properties;
       normalizationWarnings = result.warnings;
     }

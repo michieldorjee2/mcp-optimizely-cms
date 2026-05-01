@@ -67,35 +67,64 @@ const componentProp: TemplateProperty = {
   itemShape: { Label: "string", Url: "string" },
 };
 
-describe("normalizeProperties — primitives", () => {
-  it("wraps a flat string in {value: …}", () => {
+describe("normalizeProperties — primitives (default: flat for /preview3/ create)", () => {
+  it("flat string passes through flat", () => {
     const { properties } = normalizeProperties(
       { headline: "Hello" },
       [stringProp]
     );
-    expect(properties.headline).toEqual({ value: "Hello" });
+    expect(properties.headline).toBe("Hello");
   });
 
-  it("leaves an already-wrapped string alone", () => {
+  it("agent-wrapped {value: 'Hello'} is unwrapped to flat", () => {
     const { properties } = normalizeProperties(
       { headline: { value: "Hello" } },
       [stringProp]
     );
-    expect(properties.headline).toEqual({ value: "Hello" });
+    expect(properties.headline).toBe("Hello");
   });
 
-  it("strips a double-wrap {value: {value: 'x'}} → {value: 'x'}", () => {
+  it("double-wrapped {value: {value: 'x'}} unwraps to flat", () => {
     const { properties } = normalizeProperties(
       { headline: { value: { value: "Hello" } } },
       [stringProp]
     );
-    expect(properties.headline).toEqual({ value: "Hello" });
+    expect(properties.headline).toBe("Hello");
   });
 
-  it("wraps a flat URL", () => {
+  it("URL primitive passes through flat", () => {
     const { properties } = normalizeProperties(
       { ctaUrl: "https://x.com" },
       [urlProp]
+    );
+    expect(properties.ctaUrl).toBe("https://x.com");
+  });
+});
+
+describe("normalizeProperties — primitives with wrapPrimitivesAsValue (update_page / /v1/)", () => {
+  it("flat string gets wrapped when wrapPrimitivesAsValue is true", () => {
+    const { properties } = normalizeProperties(
+      { headline: "Hello" },
+      [stringProp],
+      { wrapPrimitivesAsValue: true }
+    );
+    expect(properties.headline).toEqual({ value: "Hello" });
+  });
+
+  it("already-wrapped stays wrapped (no double-wrap)", () => {
+    const { properties } = normalizeProperties(
+      { headline: { value: "Hello" } },
+      [stringProp],
+      { wrapPrimitivesAsValue: true }
+    );
+    expect(properties.headline).toEqual({ value: "Hello" });
+  });
+
+  it("URL primitive wrapped when wrapPrimitivesAsValue is true", () => {
+    const { properties } = normalizeProperties(
+      { ctaUrl: "https://x.com" },
+      [urlProp],
+      { wrapPrimitivesAsValue: true }
     );
     expect(properties.ctaUrl).toEqual({ value: "https://x.com" });
   });
@@ -243,71 +272,47 @@ describe("normalizeProperties — single component (object)", () => {
   });
 });
 
-describe("normalizeProperties — PascalCase system metadata fields", () => {
+describe("normalizeProperties — both PascalCase and camelCase primitives are flat by default (create_page surface)", () => {
+  // Earlier the rule was per-key (PascalCase flat / camelCase wrapped).
+  // Production logs proved that wrong: every camelCase primitive
+  // (eyebrow, comparisonDescription, headline, …) hits the same .NET
+  // StartObject error on /preview3/experimental/content. Now ALL
+  // primitives are flat for create_page.
   const pageTitle: TemplateProperty = {
-    key: "PageTitle",
-    label: "Page Title",
-    type: "string",
-    required: true,
-    description: "",
-    example: "",
+    key: "PageTitle", label: "Page Title", type: "string",
+    required: true, description: "", example: "",
   };
-  const metaDescription: TemplateProperty = {
-    key: "MetaDescription",
-    label: "Meta Description",
-    type: "string",
-    required: true,
-    description: "",
-    example: "",
+  const eyebrow: TemplateProperty = {
+    key: "eyebrow", label: "Eyebrow", type: "string",
+    required: true, description: "", example: "",
   };
 
-  it("PageTitle: flat string passes through flat", () => {
+  it("PageTitle (PascalCase) and eyebrow (camelCase) are both flat", () => {
     const { properties } = normalizeProperties(
-      { PageTitle: "Hello world" },
-      [pageTitle]
+      { PageTitle: "Hi", eyebrow: "Hi" },
+      [pageTitle, eyebrow]
     );
-    expect(properties.PageTitle).toBe("Hello world");
+    expect(properties.PageTitle).toBe("Hi");
+    expect(properties.eyebrow).toBe("Hi");
   });
 
-  it("PageTitle: agent-wrapped {value: …} gets unwrapped to flat", () => {
+  it("agent-wrapped values for either case are unwrapped to flat", () => {
     const { properties } = normalizeProperties(
-      { PageTitle: { value: "Hello world" } },
-      [pageTitle]
+      { PageTitle: { value: "Hi" }, eyebrow: { value: "Hi" } },
+      [pageTitle, eyebrow]
     );
-    expect(properties.PageTitle).toBe("Hello world");
+    expect(properties.PageTitle).toBe("Hi");
+    expect(properties.eyebrow).toBe("Hi");
   });
 
-  it("PageTitle: doubly-wrapped also unwraps to flat", () => {
+  it("with wrapPrimitivesAsValue:true (update_page surface) both wrap", () => {
     const { properties } = normalizeProperties(
-      { PageTitle: { value: { value: "Hello world" } } },
-      [pageTitle]
+      { PageTitle: "Hi", eyebrow: "Hi" },
+      [pageTitle, eyebrow],
+      { wrapPrimitivesAsValue: true }
     );
-    expect(properties.PageTitle).toBe("Hello world");
-  });
-
-  it("MetaDescription follows the same rule", () => {
-    const { properties } = normalizeProperties(
-      { MetaDescription: { value: "Compare X to Y" } },
-      [metaDescription]
-    );
-    expect(properties.MetaDescription).toBe("Compare X to Y");
-  });
-
-  it("camelCase custom field with same content keeps wrapping", () => {
-    const headline: TemplateProperty = {
-      key: "headline",
-      label: "Headline",
-      type: "string",
-      required: true,
-      description: "",
-      example: { value: "" },
-    };
-    const { properties } = normalizeProperties(
-      { headline: "Hello world", PageTitle: "Hello world" },
-      [headline, pageTitle]
-    );
-    expect(properties.headline).toEqual({ value: "Hello world" });
-    expect(properties.PageTitle).toBe("Hello world");
+    expect(properties.PageTitle).toEqual({ value: "Hi" });
+    expect(properties.eyebrow).toEqual({ value: "Hi" });
   });
 });
 
@@ -317,7 +322,7 @@ describe("normalizeProperties — unknowns + case", () => {
       { Headline: "Hi" },
       [stringProp]
     );
-    expect(properties.headline).toEqual({ value: "Hi" });
+    expect(properties.headline).toBe("Hi");
     expect(warnings.find((w) => w.key === "Headline")).toBeDefined();
   });
 
