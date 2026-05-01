@@ -54,7 +54,7 @@ export async function loadOrBuildTemplate(
         cachedHash: cached.schemaHash,
         liveHash,
       });
-      return await buildAndSave(contentTypeName, liveCt, graphKey);
+      return await buildAndSave(contentTypeName, liveCt, graphKey, clientId, clientSecret);
     } catch (e) {
       log.warn("template_loader.drift_check_failed", {
         contentType: contentTypeName,
@@ -72,7 +72,7 @@ export async function loadOrBuildTemplate(
     });
     try {
       const liveCt = await getContentType(clientId, clientSecret, contentTypeName);
-      return await buildAndSave(contentTypeName, liveCt, graphKey);
+      return await buildAndSave(contentTypeName, liveCt, graphKey, clientId, clientSecret);
     } catch (e) {
       log.warn("template_loader.format_refresh_failed", {
         contentType: contentTypeName,
@@ -88,7 +88,7 @@ export async function loadOrBuildTemplate(
 
   try {
     const liveCt = await getContentType(clientId, clientSecret, contentTypeName);
-    return await buildAndSave(contentTypeName, liveCt, graphKey);
+    return await buildAndSave(contentTypeName, liveCt, graphKey, clientId, clientSecret);
   } catch (e) {
     log.warn("template_loader.build_failed", {
       contentType: contentTypeName,
@@ -101,13 +101,15 @@ export async function loadOrBuildTemplate(
 async function buildAndSave(
   contentTypeName: string,
   liveCt: CmsContentType,
-  graphKey: string
+  graphKey: string,
+  clientId: string,
+  clientSecret: string
 ): Promise<Template | null> {
   if (!liveCt.properties || Object.keys(liveCt.properties).length === 0) {
     return null;
   }
   const { properties, contentReferences, submissionExample } =
-    await buildPropertiesFromContentType(liveCt, graphKey);
+    await buildPropertiesFromContentType(liveCt, graphKey, clientId, clientSecret);
   const template: Template = {
     name: contentTypeName,
     contentType: contentTypeName,

@@ -1,5 +1,7 @@
 import type { CmsContentType, CmsContentTypeProperty, TemplateProperty } from "../types.js";
 import { introspectContentType, clearTypeCache } from "./graph-api.js";
+import { getContentType } from "./cms-api.js";
+import { log } from "./log.js";
 
 /**
  * Bump whenever the example / itemShape encoding changes in a way that would
@@ -14,9 +16,12 @@ import { introspectContentType, clearTypeCache } from "./graph-api.js";
  * as bare {field: value} objects rather than {properties: {field: {value}}}.
  * /v1/.../versions still expects the wrapped shape; normalizeProperties handles
  * that via the `surface` option. loadOrBuildTemplate treats a version mismatch
- * the same as drift — rebuild and overwrite.
+ * the same as drift — rebuild and overwrite. v7: pull sub-component
+ * enum/length constraints from the CMS contenttypes API and surface them in
+ * itemShape + the per-property description, with the first enum value used
+ * as the example so submissionExample doesn't fail enum validation.
  */
-export const TEMPLATE_FORMAT_VERSION = 6;
+export const TEMPLATE_FORMAT_VERSION = 7;
 
 // ---------------------------------------------------------------------------
 // Build example values matching what /preview3/experimental/content (the
@@ -118,6 +123,59 @@ async function buildItemShapeFromGraph(
 }
 
 // ---------------------------------------------------------------------------
+// Pull sub-component enum / length / pattern constraints from the CMS
+// contenttypes API. Graph introspection only sees types; the CMS API has the
+// full validation metadata. Without this, agents can't tell that
+// comparisonTableRows.OurValue accepts only "Yes" / "No" / "Limited" until
+// the CMS rejects their submission.
+// ---------------------------------------------------------------------------
+
+interface SubFieldConstraints {
+  enumValues?: string[];
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+}
+
+async function fetchSubComponentConstraints(
+  contentTypeName: string,
+  clientId: string,
+  clientSecret: string
+): Promise<Record<string, SubFieldConstraints>> {
+  try {
+    const ct = await getContentType(clientId, clientSecret, contentTypeName);
+    const out: Record<string, SubFieldConstraints> = {};
+    if (!ct.properties) return out;
+    for (const [fieldName, fieldDef] of Object.entries(ct.properties)) {
+      const c: SubFieldConstraints = {};
+      if (fieldDef.enum && fieldDef.enum.length > 0) {
+        c.enumValues = fieldDef.enum.map((e) => e.value);
+      }
+      if (fieldDef.minLength != null) c.minLength = fieldDef.minLength;
+      if (fieldDef.maxLength != null) c.maxLength = fieldDef.maxLength;
+      if (fieldDef.pattern) c.pattern = fieldDef.pattern;
+      if (Object.keys(c).length > 0) out[fieldName] = c;
+    }
+    return out;
+  } catch (e) {
+    log.warn("template_builder.subcomponent_introspect_failed", {
+      contentType: contentTypeName,
+      error: { message: e instanceof Error ? e.message : String(e) },
+    });
+    return {};
+  }
+}
+
+function describeSubField(name: string, type: string, constraints: SubFieldConstraints | undefined): string {
+  const parts = [`${name} (${type})`];
+  if (constraints?.enumValues && constraints.enumValues.length > 0) {
+    parts.push(`enum: ${constraints.enumValues.join(", ")}`);
+  }
+  if (constraints?.maxLength != null) parts.push(`max ${constraints.maxLength} chars`);
+  return parts.join(" — ");
+}
+
+// ---------------------------------------------------------------------------
 // Build description with validation hints baked in
 // ---------------------------------------------------------------------------
 
@@ -153,7 +211,9 @@ function buildDescription(
 export async function buildPropertyFromCms(
   key: string,
   cmsProp: CmsContentTypeProperty,
-  graphKey: string
+  graphKey: string,
+  clientId?: string,
+  clientSecret?: string
 ): Promise<{ prop: TemplateProperty; isContentRef: boolean }> {
   const label = cmsProp.displayName || key.replace(/([A-Z])/g, " $1").trim();
   const required = cmsProp.required ?? false;
@@ -182,11 +242,29 @@ export async function buildPropertyFromCms(
       };
     }
 
-    // Array of components — get sub-type shape from Graph
+    // Array of components — get sub-type shape from Graph, then enrich
+    // with enum / length constraints from the CMS contenttypes API.
     if (itemType === "component" && cmsProp.items.contentType) {
       clearTypeCache();
-      const { shape, example: rawExample } = await buildItemShapeFromGraph(graphKey, cmsProp.items.contentType);
-      const shapeDesc = Object.entries(shape).map(([k, v]) => `${k} (${v})`).join(", ");
+      const subTypeName = cmsProp.items.contentType;
+      const { shape, example: rawExample } = await buildItemShapeFromGraph(graphKey, subTypeName);
+      const constraints =
+        clientId && clientSecret
+          ? await fetchSubComponentConstraints(subTypeName, clientId, clientSecret)
+          : {};
+      // For each enum-bearing field, replace the example value with the
+      // first allowed enum value so the paste-and-fill flow validates.
+      const enrichedExample = { ...rawExample };
+      for (const [fieldName, c] of Object.entries(constraints)) {
+        if (c.enumValues && c.enumValues.length > 0 && fieldName in enrichedExample) {
+          enrichedExample[fieldName] = c.enumValues[0];
+        }
+      }
+      const shapeDesc = Object.entries(shape)
+        .map(([k, v]) => describeSubField(k, v, constraints[k]))
+        .join("; ");
+      const sampleCount = Math.max(1, cmsProp.minItems ?? 1);
+      const sampleItems = Array.from({ length: sampleCount }, () => ({ ...enrichedExample }));
       return {
         prop: {
           key, label, type: "object[]", required,
@@ -194,7 +272,7 @@ export async function buildPropertyFromCms(
             `Each item has: ${shapeDesc}.`,
             "For create_page send a flat array of flat-field items: [{<field>: <primitive>, …}, …]. For update_page the tool wraps to {value: [{properties: {<field>: {value: <primitive>}, …}}, …]} on your behalf.",
           ]),
-          example: wrapExample([rawExample], "object[]"),
+          example: wrapExample(sampleItems, "object[]"),
           itemShape: shape,
           ...(cmsProp.minItems != null && { minItems: cmsProp.minItems }),
           ...(cmsProp.maxItems != null && { maxItems: cmsProp.maxItems }),
@@ -220,8 +298,21 @@ export async function buildPropertyFromCms(
   // --- Component (single object) ---
   if (cmsProp.type === "component" && cmsProp.contentType) {
     clearTypeCache();
-    const { shape, example: rawExample } = await buildItemShapeFromGraph(graphKey, cmsProp.contentType);
-    const shapeDesc = Object.entries(shape).map(([k, v]) => `${k} (${v})`).join(", ");
+    const subTypeName = cmsProp.contentType;
+    const { shape, example: rawExample } = await buildItemShapeFromGraph(graphKey, subTypeName);
+    const constraints =
+      clientId && clientSecret
+        ? await fetchSubComponentConstraints(subTypeName, clientId, clientSecret)
+        : {};
+    const enrichedExample = { ...rawExample };
+    for (const [fieldName, c] of Object.entries(constraints)) {
+      if (c.enumValues && c.enumValues.length > 0 && fieldName in enrichedExample) {
+        enrichedExample[fieldName] = c.enumValues[0];
+      }
+    }
+    const shapeDesc = Object.entries(shape)
+      .map(([k, v]) => describeSubField(k, v, constraints[k]))
+      .join("; ");
     return {
       prop: {
         key, label, type: "object", required,
@@ -229,7 +320,7 @@ export async function buildPropertyFromCms(
           `Shape: ${shapeDesc}.`,
           "For create_page send a flat object {<field>: <primitive>, …}. For update_page the tool wraps to {properties: {<field>: {value: <primitive>}, …}} on your behalf.",
         ]),
-        example: wrapExample(rawExample, "object"),
+        example: wrapExample(enrichedExample, "object"),
         itemShape: shape,
       },
       isContentRef: false,
@@ -278,7 +369,9 @@ export async function buildPropertyFromCms(
 
 export async function buildPropertiesFromContentType(
   contentType: CmsContentType,
-  graphKey: string
+  graphKey: string,
+  clientId?: string,
+  clientSecret?: string
 ): Promise<{
   properties: TemplateProperty[];
   contentReferences: string[];
@@ -292,7 +385,13 @@ export async function buildPropertiesFromContentType(
   }
 
   for (const [key, cmsProp] of Object.entries(contentType.properties)) {
-    const { prop, isContentRef } = await buildPropertyFromCms(key, cmsProp, graphKey);
+    const { prop, isContentRef } = await buildPropertyFromCms(
+      key,
+      cmsProp,
+      graphKey,
+      clientId,
+      clientSecret
+    );
     properties.push(prop);
     if (isContentRef) {
       contentReferences.push(prop.key);
