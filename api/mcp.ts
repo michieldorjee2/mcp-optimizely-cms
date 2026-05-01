@@ -90,14 +90,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // request reliably; collapsing the outcome here avoids relying on
       // the inner tool.* logs that get dropped post-res.end.
       const captured: Buffer[] = [];
-      // Patch res.write AND res.end to ONLY buffer, never pass through.
-      // Vercel's serverless runtime starts detaching stdout the moment
-      // it sees the response starting to flush (first write or end),
-      // which is why mcp.complete previously vanished. We buffer the
-      // entire response body, emit the log, then call origWrite +
-      // origEnd ourselves to flush in one go. The MCP transport in
-      // stateless mode produces a single SSE message per request, so
-      // there's no real streaming benefit being lost.
+      // Patch res.write to tee bytes into `captured` (passes through
+      // immediately so progressive SSE writes still reach the wire);
+      // patch res.end to tee + DEFER. Vercel's serverless runtime stops
+      // capturing stdout once res.end fires, so any log emitted after the
+      // transport's final write is silently dropped — that's why
+      // mcp.complete previously never surfaced. We hold the end signal
+      // until after we've logged, then call origEnd ourselves.
       type Patchable = {
         write: (chunk: unknown, ...rest: unknown[]) => boolean;
         end: (chunk?: unknown, ...rest: unknown[]) => unknown;
@@ -105,19 +104,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const patchable = res as unknown as Patchable;
       const origWrite = patchable.write.bind(patchable);
       const origEnd = patchable.end.bind(patchable);
+      let endChunk: unknown = undefined;
+      let endRest: unknown[] = [];
       let endCalled = false;
-      patchable.write = (chunk: unknown) => {
+      patchable.write = (chunk: unknown, ...rest: unknown[]) => {
         if (typeof chunk === "string") captured.push(Buffer.from(chunk));
         else if (chunk instanceof Buffer) captured.push(chunk);
-        return true; // claim success without actually flushing
+        return origWrite(chunk, ...rest);
       };
-      patchable.end = (chunk?: unknown) => {
+      patchable.end = (chunk?: unknown, ...rest: unknown[]) => {
         if (chunk !== undefined) {
           if (typeof chunk === "string") captured.push(Buffer.from(chunk));
           else if (chunk instanceof Buffer) captured.push(chunk);
         }
+        endChunk = chunk;
+        endRest = rest;
         endCalled = true;
-        return res; // claim success; the real end happens after the log
+        return res; // claim success; we'll really end the response below
       };
 
       await transport.handleRequest(
@@ -189,15 +192,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ...(outcome.hasNormalizationNotes ? { hasNormalizationNotes: true } : {}),
       });
 
-      // Now actually flush the response. Both res.write and res.end were
-      // captured-only above so the log lands while stdout is still
-      // attached; flush in one shot here.
-      const fullBody = Buffer.concat(captured);
-      if (fullBody.length > 0) {
-        origWrite(fullBody);
-      }
+      // Now actually end the response. Up to here res.end was deferred
+      // so the log above lands while stdout capture is still attached.
       if (endCalled) {
-        origEnd();
+        origEnd(endChunk, ...endRest);
       }
 
       return;
