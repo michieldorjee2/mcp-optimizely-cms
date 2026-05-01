@@ -6,11 +6,28 @@ import { introspectContentType, clearTypeCache } from "./graph-api.js";
  * mislead the agent if it copied a stale cached template. v2 switched
  * `example` from raw values to the wrapped CMS submission shape ({value:…},
  * {properties:{…}}, {value:[{properties:{…}}]}). v3 adds submissionExample
- * (one full-skeleton paste-and-fill object) — older caches don't have it,
- * so loadOrBuildTemplate rebuilds them on first use after deploy. Treats a
- * mismatch the same as drift — rebuild + overwrite.
+ * (one full-skeleton paste-and-fill object). v4 unwraps PascalCase system
+ * metadata fields (PageTitle / MetaDescription / Meta*) — the CMS write
+ * endpoint rejects them when wrapped, so example values now show the flat
+ * shape these specific fields require. loadOrBuildTemplate treats a
+ * version mismatch the same as drift — rebuild and overwrite.
  */
-export const TEMPLATE_FORMAT_VERSION = 3;
+export const TEMPLATE_FORMAT_VERSION = 4;
+
+/**
+ * PascalCase keys (PageTitle, MetaDescription, MetaKeywords, MetaTitle, …)
+ * are system/metadata properties inherited from base content types. The
+ * CMS rejects them when wrapped in {value: …} on the write endpoint —
+ * even though the read endpoint returns them wrapped. Custom user-defined
+ * properties are camelCase by convention and DO require the wrap. This
+ * helper distinguishes the two by first-letter case so example values
+ * and submissionExample show the flat shape for system fields.
+ */
+function isFlatSystemKey(key: string): boolean {
+  if (!key) return false;
+  const first = key[0];
+  return !!first && first === first.toUpperCase() && first !== first.toLowerCase();
+}
 
 // ---------------------------------------------------------------------------
 // Wrap raw example values into the CMS submission shape so the agent can
@@ -32,7 +49,7 @@ function wrapComponentObject(raw: Record<string, unknown>): { properties: Record
   return { properties };
 }
 
-function wrapExample(rawExample: unknown, type: string): unknown {
+function wrapExample(rawExample: unknown, type: string, key?: string): unknown {
   // Content references stay raw — they're string IDs.
   if (type === "contentId" || type === "contentId[]") return rawExample;
 
@@ -50,6 +67,12 @@ function wrapExample(rawExample: unknown, type: string): unknown {
           : item
       ),
     };
+  }
+
+  // PascalCase system metadata fields (PageTitle, MetaDescription, …)
+  // get a flat scalar — the CMS write endpoint rejects them wrapped.
+  if (key && isFlatSystemKey(key) && !type.endsWith("[]")) {
+    return rawExample;
   }
 
   // Scalars + scalar arrays + URL types — single {value: …} wrapper.
@@ -259,7 +282,7 @@ export async function buildPropertyFromCms(
   const prop: TemplateProperty = {
     key, label, type: mapped.type, required,
     description: buildDescription(label, cmsProp, extraHints),
-    example: wrapExample(mapped.example, mapped.type),
+    example: wrapExample(mapped.example, mapped.type, key),
   };
 
   if (cmsProp.minLength != null) prop.minLength = cmsProp.minLength;

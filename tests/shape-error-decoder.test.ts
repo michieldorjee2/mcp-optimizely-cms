@@ -3,12 +3,21 @@ import { decodeShapeError } from "../src/services/shape-error-decoder.js";
 import type { TemplateProperty } from "../src/types.js";
 
 const stringProp: TemplateProperty = {
-  key: "PageTitle",
-  label: "PageTitle",
+  key: "headline",
+  label: "Headline",
   type: "string",
   required: true,
   description: "",
   example: { value: "" },
+};
+
+const systemMetaProp: TemplateProperty = {
+  key: "PageTitle",
+  label: "Page Title",
+  type: "string",
+  required: true,
+  description: "",
+  example: "",
 };
 
 const arrayProp: TemplateProperty = {
@@ -21,7 +30,28 @@ const arrayProp: TemplateProperty = {
 };
 
 describe("decodeShapeError", () => {
-  it("turns the .NET StartObject-as-string error into a primitive_wanted hint", () => {
+  it("turns the .NET StartObject-as-string error into a primitive_wanted hint (camelCase custom field expects wrapper)", () => {
+    const hints = decodeShapeError(
+      {
+        error: "Validation failed.",
+        fieldErrors: [
+          {
+            field: "properties.headline",
+            detail: "Cannot get the value of a token type 'StartObject' as a string.",
+          },
+        ],
+      },
+      { headline: { value: { value: "Hi" } } },
+      [stringProp]
+    );
+    expect(hints).toHaveLength(1);
+    expect(hints[0].field).toBe("headline");
+    expect(hints[0].message).toMatch(/primitive/i);
+    expect(hints[0].expectedShape).toMatch(/value/);
+    expect(hints[0].sentShape).toMatch(/value/);
+  });
+
+  it("for PageTitle (PascalCase system field), expectedShape says flat — no wrapper", () => {
     const hints = decodeShapeError(
       {
         error: "Validation failed.",
@@ -32,14 +62,13 @@ describe("decodeShapeError", () => {
           },
         ],
       },
-      { PageTitle: { value: { value: "Hi" } } },
-      [stringProp]
+      { PageTitle: { value: "Hi" } },
+      [systemMetaProp]
     );
     expect(hints).toHaveLength(1);
     expect(hints[0].field).toBe("PageTitle");
-    expect(hints[0].message).toMatch(/primitive/i);
-    expect(hints[0].expectedShape).toMatch(/value/);
-    expect(hints[0].sentShape).toMatch(/value/);
+    expect(hints[0].expectedShape).toMatch(/flat/);
+    expect(hints[0].expectedShape).not.toMatch(/value/);
   });
 
   it("turns the array-expected error into an array_wanted hint", () => {

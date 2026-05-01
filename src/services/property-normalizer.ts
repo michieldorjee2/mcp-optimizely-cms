@@ -76,6 +76,30 @@ function isPrimitive(v: unknown): v is string | number | boolean | null {
   return v === null || ["string", "number", "boolean"].includes(typeof v);
 }
 
+/**
+ * Optimizely's CMS REST API has a quirk that took a real production
+ * incident to pin down: PascalCase property keys (PageTitle,
+ * MetaDescription, MetaKeywords, MetaTitle, …) are system/metadata
+ * fields inherited from base content types like `_Page`. They live in
+ * the `properties` map alongside custom fields, but the WRITE endpoint
+ * rejects them when wrapped in {value: …} with the message
+ *   "Cannot get the value of a token type 'StartObject' as a string."
+ *
+ * Custom user-defined properties are camelCase by convention
+ * (comparisonHeadline, intelStats, …) and DO require the {value: …}
+ * wrap. The first-letter-case test cleanly distinguishes the two
+ * without instrumenting the upstream contenttype response.
+ *
+ * The READ endpoint returns these flat fields wrapped, which is what
+ * led the agent to assume the same shape works for writes — it
+ * doesn't, only for these particular keys.
+ */
+function isFlatSystemKey(key: string): boolean {
+  if (!key) return false;
+  const first = key[0];
+  return !!first && first === first.toUpperCase() && first !== first.toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // Per-property normalization
 // ---------------------------------------------------------------------------
@@ -201,8 +225,15 @@ function normalizeValue(
   }
 
   // ---- primitive scalars (string, url, boolean, number, etc.) ----
-  // Strip any number of accidental wrappers and re-wrap once.
+  // Strip any number of accidental wrappers down to the inner primitive.
+  // Then either re-wrap as {value: …} (for custom user-defined fields)
+  // or pass through flat (for PascalCase system/metadata fields like
+  // PageTitle / MetaDescription that the CMS write endpoint rejects when
+  // wrapped — see isFlatSystemKey for the reasoning).
   const inner = unwrapDeep(value);
+  if (isFlatSystemKey(prop.key)) {
+    return inner;
+  }
   return { value: inner };
 }
 
