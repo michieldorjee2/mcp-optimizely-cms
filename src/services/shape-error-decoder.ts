@@ -161,22 +161,22 @@ function describeShape(value: unknown): string {
 
 function expectedShapeFor(prop: TemplateProperty | undefined): string | undefined {
   if (!prop) return undefined;
+  // Shape hints reflect what create_page (POST /preview3/experimental/content)
+  // expects, since that's where the .NET StartObject errors come from.
+  // update_page errors are decoded the same way but the v1 surface accepts
+  // either shape so the hint is rarely actionable there.
   switch (prop.type) {
     case "object[]":
-      return "{value: [{properties: {<field>: {value: <primitive>}, …}}, …]}";
+      return "[{<field>: <primitive>, …}, …]";
     case "object":
-      return "{properties: {<field>: {value: <primitive>}, …}}";
+      return "{<field>: <primitive>, …}";
     case "contentId":
       return "<32-char hex string>";
     case "contentId[]":
       return "[<32-char hex string>, …]";
     default:
-      if (prop.type.endsWith("[]")) return "{value: [<primitive>, …]}";
-      // Plain primitives: FLAT for the create endpoint. The earlier
-      // PascalCase-only carve-out turned out to be too narrow — the
-      // /preview3/experimental/content surface rejects {value: <primitive>}
-      // for ALL primitive fields, not just system ones.
-      return `<${prop.type}> (flat — primitives are not wrapped on create_page)`;
+      if (prop.type.endsWith("[]")) return "[<primitive>, …]";
+      return `<${prop.type}> (flat — no wrapping on create_page)`;
   }
 }
 

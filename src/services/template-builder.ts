@@ -6,66 +6,52 @@ import { introspectContentType, clearTypeCache } from "./graph-api.js";
  * mislead the agent if it copied a stale cached template. v2 switched
  * `example` from raw values to the wrapped CMS submission shape. v3 added
  * submissionExample (one full-skeleton paste-and-fill object). v4 unwrapped
- * PascalCase keys based on a heuristic that turned out to be wrong. v5
- * unwraps ALL primitive scalars: production logs showed every camelCase
- * primitive (eyebrow, comparisonDescription, etc.) hits the same .NET
- * StartObject error on /preview3/experimental/content. The actual rule is
- * per-surface, not per-key — the create endpoint wants flat primitives
- * for everything; arrays and components stay wrapped. (The /v1/.../versions
- * endpoint update_page uses still wants wrapped — the normalizer handles
- * that internally via wrapPrimitivesAsValue.) loadOrBuildTemplate treats a
- * version mismatch the same as drift — rebuild and overwrite.
+ * PascalCase keys (wrong heuristic). v5 unwrapped only primitives. v6 goes
+ * fully flat for create_page: an end-to-end test against /preview3/experimental/content
+ * showed comparisonTableRows ({"value": [...]}) was rejected with
+ * "Could not read value as a list. Expected array." — so component arrays
+ * also have to be top-level flat for the create surface, with their items
+ * as bare {field: value} objects rather than {properties: {field: {value}}}.
+ * /v1/.../versions still expects the wrapped shape; normalizeProperties handles
+ * that via the `surface` option. loadOrBuildTemplate treats a version mismatch
+ * the same as drift — rebuild and overwrite.
  */
-export const TEMPLATE_FORMAT_VERSION = 5;
+export const TEMPLATE_FORMAT_VERSION = 6;
 
 // ---------------------------------------------------------------------------
-// Wrap raw example values into the CMS submission shape the create endpoint
-// expects. Used for both per-property `example` values and the top-level
-// `submissionExample` skeleton. Shape rules (for /preview3/experimental/content):
-//   - primitive  → <primitive>            (FLAT — wrapping rejected)
-//   - component  → {"properties": {<key>: {"value": <primitive>}, …}}
-//   - object[]   → {"value": [{"properties": {<key>: {"value": …}}}, …]}
-//   - scalar[]   → {"value": [<scalar>, …]}
-// contentId / contentId[] examples stay raw — they're already string IDs and
-// the CMS accepts them as-is.
+// Build example values matching what /preview3/experimental/content (the
+// create endpoint) expects. Used for both per-property `example` values and
+// the top-level `submissionExample` skeleton. Shape rules:
+//   - primitive  → <primitive>                          (flat)
+//   - component  → {<field>: <primitive>}               (flat)
+//   - object[]   → [{<field>: <primitive>}, …]          (flat array, flat items)
+//   - scalar[]   → [<scalar>, …]                        (flat array)
+//   - contentId / contentId[] → raw string id(s)
+//
+// update_page targets /v1/.../versions which uses the wrapped shape; the
+// normalizer reshapes on the way out via the "update" surface option.
 // ---------------------------------------------------------------------------
-
-function wrapComponentObject(raw: Record<string, unknown>): { properties: Record<string, unknown> } {
-  const properties: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    properties[k] = { value: v };
-  }
-  return { properties };
-}
 
 function wrapExample(rawExample: unknown, type: string): unknown {
   // Content references stay raw — they're string IDs.
   if (type === "contentId" || type === "contentId[]") return rawExample;
 
-  // Single component → {properties: {…}}
+  // Single component: keep its fields flat (no {value: …} wrapping).
   if (type === "object" && rawExample && typeof rawExample === "object" && !Array.isArray(rawExample)) {
-    return wrapComponentObject(rawExample as Record<string, unknown>);
+    return rawExample;
   }
 
-  // Array of components → {value: [{properties: {…}}, …]}
+  // Component array: bare array of bare-field objects.
   if (type === "object[]" && Array.isArray(rawExample)) {
-    return {
-      value: rawExample.map((item) =>
-        item && typeof item === "object" && !Array.isArray(item)
-          ? wrapComponentObject(item as Record<string, unknown>)
-          : item
-      ),
-    };
+    return rawExample;
   }
 
-  // Scalar arrays still wrap with {value: [...]} — only the elements are
-  // bare scalars.
+  // Scalar arrays: bare array.
   if (type.endsWith("[]")) {
-    return { value: rawExample };
+    return rawExample;
   }
 
-  // Plain primitives: FLAT. /preview3/experimental/content rejects
-  // {value: <primitive>} for every primitive field, not just system ones.
+  // Plain primitives: flat.
   return rawExample;
 }
 
@@ -206,7 +192,7 @@ export async function buildPropertyFromCms(
           key, label, type: "object[]", required,
           description: buildDescription(label, cmsProp, [
             `Each item has: ${shapeDesc}.`,
-            "Submit each item wrapped as {properties: {<field>: {value: <primitive>}, …}} inside the outer {value: [...]}.",
+            "For create_page send a flat array of flat-field items: [{<field>: <primitive>, …}, …]. For update_page the tool wraps to {value: [{properties: {<field>: {value: <primitive>}, …}}, …]} on your behalf.",
           ]),
           example: wrapExample([rawExample], "object[]"),
           itemShape: shape,
@@ -241,7 +227,7 @@ export async function buildPropertyFromCms(
         key, label, type: "object", required,
         description: buildDescription(label, cmsProp, [
           `Shape: ${shapeDesc}.`,
-          "Submit as {properties: {<field>: {value: <primitive>}, …}}.",
+          "For create_page send a flat object {<field>: <primitive>, …}. For update_page the tool wraps to {properties: {<field>: {value: <primitive>}, …}} on your behalf.",
         ]),
         example: wrapExample(rawExample, "object"),
         itemShape: shape,
