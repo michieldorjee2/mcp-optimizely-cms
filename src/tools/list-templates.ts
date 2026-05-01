@@ -28,6 +28,7 @@ export async function listTemplatesHandler(input: ListTemplatesInput) {
       propertyCount: t.properties.length,
       properties: t.properties,
       contentReferences: t.contentReferences,
+      ...(t.submissionExample ? { submissionExample: t.submissionExample } : {}),
       createdAt: t.createdAt,
     })),
   };

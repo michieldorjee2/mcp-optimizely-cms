@@ -5,10 +5,12 @@ import { introspectContentType, clearTypeCache } from "./graph-api.js";
  * Bump whenever the example / itemShape encoding changes in a way that would
  * mislead the agent if it copied a stale cached template. v2 switched
  * `example` from raw values to the wrapped CMS submission shape ({value:…},
- * {properties:{…}}, {value:[{properties:{…}}]}). loadOrBuildTemplate treats
- * a mismatch the same as drift — rebuild + overwrite.
+ * {properties:{…}}, {value:[{properties:{…}}]}). v3 adds submissionExample
+ * (one full-skeleton paste-and-fill object) — older caches don't have it,
+ * so loadOrBuildTemplate rebuilds them on first use after deploy. Treats a
+ * mismatch the same as drift — rebuild + overwrite.
  */
-export const TEMPLATE_FORMAT_VERSION = 2;
+export const TEMPLATE_FORMAT_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Wrap raw example values into the CMS submission shape so the agent can
@@ -278,12 +280,16 @@ export async function buildPropertyFromCms(
 export async function buildPropertiesFromContentType(
   contentType: CmsContentType,
   graphKey: string
-): Promise<{ properties: TemplateProperty[]; contentReferences: string[] }> {
+): Promise<{
+  properties: TemplateProperty[];
+  contentReferences: string[];
+  submissionExample: Record<string, unknown>;
+}> {
   const properties: TemplateProperty[] = [];
   const contentReferences: string[] = [];
 
   if (!contentType.properties) {
-    return { properties, contentReferences };
+    return { properties, contentReferences, submissionExample: {} };
   }
 
   for (const [key, cmsProp] of Object.entries(contentType.properties)) {
@@ -294,5 +300,28 @@ export async function buildPropertiesFromContentType(
     }
   }
 
-  return { properties, contentReferences };
+  // submissionExample: include every required field plus a small handful of
+  // optional ones, so the agent sees the wrapping convention demonstrated
+  // across types (string, url, object[]) without bloating to all 50+
+  // fields. Optional fields cap at 3 to keep the example skim-able.
+  const submissionExample = buildSubmissionExample(properties);
+
+  return { properties, contentReferences, submissionExample };
+}
+
+function buildSubmissionExample(props: TemplateProperty[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const optionalSamples: TemplateProperty[] = [];
+
+  for (const p of props) {
+    if (p.required) {
+      out[p.key] = p.example;
+    } else if (optionalSamples.length < 3) {
+      optionalSamples.push(p);
+    }
+  }
+  for (const p of optionalSamples) {
+    out[p.key] = p.example;
+  }
+  return out;
 }

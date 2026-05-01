@@ -43,7 +43,9 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       "",
       "What it does:",
       "- Auto-introspects the content type's schema (no need to call create_template first).",
+      "- AUTO-NORMALIZES propertiesJson: you can pass values flat ({\"headline\": \"Hi\"}) or already wrapped ({\"headline\": {\"value\": \"Hi\"}}) and the tool emits the canonical CMS shape. Component arrays accept flat items or pre-shaped {properties: …} items. Content references stay as raw string ids. Coercions are reported under `normalizationNotes` so you can learn the canonical shape.",
       "- Validates propertiesJson against required fields, length and array bounds, enum values, and pattern constraints BEFORE calling Optimizely, so shape errors come back as a structured validation report instead of a raw API 400.",
+      "- On a CMS-side shape error, decodes Optimizely's cryptic .NET deserialization messages (\"Cannot get the value of a token type 'StartObject' as a string\") into per-field `shapeHints` that name the property, the expected wrapping, and what was sent.",
       "- Creates the page directly in published state by default; pass status='draft' to stage.",
       "",
       "Returns: { success, contentId, displayName, contentType, status }. Pass contentId to update_page or get_page next.",
@@ -110,7 +112,9 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       "4. Publishes the new version unless status='draft' was passed.",
       "5. Re-pins routeSegment back to the desired value (caller's override or the prior slug).",
       "",
-      "On error, the response includes the failed stage, the parsed Optimizely error, the attempted overrides, and the current properties — so a shape mismatch on a single field (e.g. an `analystCards` component) is debuggable in one glance.",
+      "Property overrides are AUTO-NORMALIZED: pass values flat ({\"headline\": \"Hi\"}) or already wrapped ({\"headline\": {\"value\": \"Hi\"}}) — the tool emits the canonical CMS shape. Coercions are reported under `normalizationNotes`.",
+      "",
+      "On error, the response includes the failed stage, the parsed Optimizely error, the attempted overrides, the current properties, and per-field `shapeHints` decoded from Optimizely's cryptic .NET deserialization messages — so a shape mismatch on a single field (e.g. an `analystCards` component) is debuggable in one glance.",
       "",
       "Returns: { success, contentId, baseVersionId, versionId, status, published, routeSegment, routeSegmentRepinned, updatedFields, ... }.",
     ].join("\n"),
@@ -125,13 +129,14 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
     async (params) => {
       const clientId = process.env.OPTIMIZELY_CMS_CLIENT_ID;
       const clientSecret = process.env.OPTIMIZELY_CMS_CLIENT_SECRET;
+      const graphKey = process.env.OPTIMIZELY_GRAPH_KEY;
       if (!clientId || !clientSecret) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "Missing CMS credentials" }) }] };
       }
       try {
         const result = await withToolLogging(
           { tool: "update_page", traceId, params },
-          () => updatePage(params, clientId, clientSecret)
+          () => updatePage(params, clientId, clientSecret, graphKey)
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
@@ -237,7 +242,7 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       "- Before create_page, to see what content types are available and what properties each needs.",
       "- To check whether a template is already cached before forcing a fresh create_template.",
       "",
-      "Each template entry includes: name, contentType, propertyCount, properties (array of { key, label, type, required, description, example, validation constraints, itemShape for object arrays, allowedTypes for content references }), contentReferences (which fields need separate content IDs to point at), and createdAt.",
+      "Each template entry includes: name, contentType, propertyCount, properties (array of { key, label, type, required, description, example, validation constraints, itemShape for object arrays, allowedTypes for content references }), contentReferences (which fields need separate content IDs to point at), submissionExample (a single ready-to-paste propertiesJson skeleton with every required field populated in the exact wrapped CMS shape), and createdAt.",
       "",
       "Note: get_page on a specific page returns the same schema shape inline alongside the page's current values — use that for a per-page workflow. list_page_templates is for surveying content types globally.",
     ].join("\n"),
@@ -288,7 +293,7 @@ export function createMcpServer(opts: CreateServerOptions = {}) {
       "- For object/component sub-types, introspects via Graph to surface the inner field shape.",
       "- Saves the result keyed by content type name; list_page_templates shows what's cached.",
       "",
-      "Returns: { success, template: { name, contentType, propertyCount, properties, contentReferences, createdAt } }.",
+      "Returns: { success, template: { name, contentType, propertyCount, properties, contentReferences, submissionExample, createdAt } }. submissionExample is a paste-and-fill propertiesJson skeleton — copy it, replace example values with your own, and pass to create_page.",
     ].join("\n"),
     {
       contentTypeName: createTemplateSchema.shape.contentTypeName,

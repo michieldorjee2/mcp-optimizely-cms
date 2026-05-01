@@ -61,6 +61,9 @@ export async function createTemplate(
       propertyCount: template.properties.length,
       properties: template.properties,
       contentReferences: template.contentReferences,
+      ...(template.submissionExample
+        ? { submissionExample: template.submissionExample }
+        : {}),
       createdAt: template.createdAt,
     },
   };

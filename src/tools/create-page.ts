@@ -5,6 +5,11 @@ import { loadOrBuildTemplate } from "../services/template-loader.js";
 import { env, envSafe, kvCreds } from "../services/env.js";
 import { stableHash } from "../services/hash.js";
 import { log } from "../services/log.js";
+import {
+  normalizeProperties,
+  type NormalizationWarning,
+} from "../services/property-normalizer.js";
+import { decodeShapeError } from "../services/shape-error-decoder.js";
 import type { Template, TemplateProperty } from "../types.js";
 
 /**
@@ -58,7 +63,7 @@ export const createPageSchema = z.object({
   propertiesJson: z
     .string()
     .describe(
-      "JSON-encoded object of property values. Each top-level key matches a field on the content type. Optimizely wraps primitive values in {\"value\": ...} and components/arrays-of-components in nested {\"value\": [...]} or {\"properties\": {...}} structures — call create_template or get_page on a similar page to see the exact expected shape. Example: '{\"headline\": {\"value\": \"Hello\"}, \"body\": {\"value\": \"World\"}}'."
+      "JSON-encoded object of property values. Each top-level key matches a field on the content type. The tool auto-normalizes — you can pass values FLAT ({\"headline\": \"Hello\"}) or already WRAPPED in the CMS shape ({\"headline\": {\"value\": \"Hello\"}}) and it will emit the canonical wrapped form to Optimizely. Component arrays accept either flat items ({\"comparisonRows\": [{\"category\": \"Speed\"}]}) or pre-shaped ones ({\"comparisonRows\": {\"value\": [{\"properties\": {\"category\": {\"value\": \"Speed\"}}}]}}) — both work. Content references (contentId / contentId[]) stay as raw string ids. The response includes a normalizationNotes array if any coercions were applied; see create_template's submissionExample for a ready-to-paste skeleton."
     ),
   idempotencyKey: z
     .string()
@@ -309,14 +314,24 @@ export async function createPage(
     clientSecret
   ).catch(() => null);
 
-  // Validate against template
+  // Normalize: coerce flat / mis-wrapped values into the canonical CMS
+  // submission shape. Validation runs on the normalized values so length /
+  // pattern / enum checks see the actual unwrapped primitive.
+  let normalizationWarnings: NormalizationWarning[] = [];
   if (template) {
+    const result = normalizeProperties(properties, template.properties);
+    properties = result.properties;
+    normalizationWarnings = result.warnings;
+
     const errors = validateProperties(properties, template.properties);
     if (errors.length > 0) {
       return {
         success: false,
         error: `Validation failed for ${input.contentType}: ${errors.map((e) => e.message).join("; ")}`,
         validationErrors: errors,
+        ...(normalizationWarnings.length > 0
+          ? { normalizationNotes: normalizationWarnings }
+          : {}),
         template: template.properties,
       };
     }
@@ -348,6 +363,12 @@ export async function createPage(
     // errors) plus the body we tried to send — so the agent can spot
     // exactly which property the CMS rejected and what it received.
     const parsed = errorToResponse(e);
+    // Decode Optimizely's cryptic .NET deserialization errors ("Cannot get
+    // the value of a token type 'StartObject' as a string", "Could not read
+    // value as a list", etc.) into per-field hints that name the property,
+    // the expected shape, and what was sent. Saves the agent from having
+    // to reverse-engineer the message.
+    const shapeHints = decodeShapeError(parsed, properties, template?.properties ?? []);
     return {
       success: false,
       stage: "create",
@@ -357,6 +378,10 @@ export async function createPage(
       ...(parsed.apiError ? { apiError: parsed.apiError } : {}),
       ...(parsed.fieldErrors && parsed.fieldErrors.length > 0
         ? { fieldErrors: parsed.fieldErrors }
+        : {}),
+      ...(shapeHints.length > 0 ? { shapeHints } : {}),
+      ...(normalizationWarnings.length > 0
+        ? { normalizationNotes: normalizationWarnings }
         : {}),
       attemptedBody: body,
     };
@@ -380,5 +405,8 @@ export async function createPage(
     contentType: result.contentType,
     status: result.status,
     ...(template ? { templateUsed: true } : {}),
+    ...(normalizationWarnings.length > 0
+      ? { normalizationNotes: normalizationWarnings }
+      : {}),
   };
 }

@@ -322,7 +322,13 @@ export async function getPage(
     ? version.contentType[version.contentType.length - 1]
     : (version.contentType as unknown as string | undefined);
 
-  let schema: { properties: unknown[]; contentReferences: string[] } | undefined;
+  let schema:
+    | {
+        properties: unknown[];
+        contentReferences: string[];
+        submissionExample?: Record<string, unknown>;
+      }
+    | undefined;
   if (input.includeSchema && graphKey && contentTypeName) {
     try {
       // Centralized loader: cache hit → no introspection; drift → rebuild;
@@ -346,6 +352,12 @@ export async function getPage(
         schema = {
           properties,
           contentReferences: built.contentReferences,
+          // Always include the submission skeleton — it's the cheapest
+          // signal for "what does a valid propertiesJson look like" and
+          // it's small relative to the rest of the response.
+          ...(built.submissionExample
+            ? { submissionExample: built.submissionExample }
+            : {}),
         };
       }
     } catch {
