@@ -4,41 +4,30 @@ import { introspectContentType, clearTypeCache } from "./graph-api.js";
 /**
  * Bump whenever the example / itemShape encoding changes in a way that would
  * mislead the agent if it copied a stale cached template. v2 switched
- * `example` from raw values to the wrapped CMS submission shape ({value:…},
- * {properties:{…}}, {value:[{properties:{…}}]}). v3 adds submissionExample
- * (one full-skeleton paste-and-fill object). v4 unwraps PascalCase system
- * metadata fields (PageTitle / MetaDescription / Meta*) — the CMS write
- * endpoint rejects them when wrapped, so example values now show the flat
- * shape these specific fields require. loadOrBuildTemplate treats a
+ * `example` from raw values to the wrapped CMS submission shape. v3 added
+ * submissionExample (one full-skeleton paste-and-fill object). v4 unwrapped
+ * PascalCase keys based on a heuristic that turned out to be wrong. v5
+ * unwraps ALL primitive scalars: production logs showed every camelCase
+ * primitive (eyebrow, comparisonDescription, etc.) hits the same .NET
+ * StartObject error on /preview3/experimental/content. The actual rule is
+ * per-surface, not per-key — the create endpoint wants flat primitives
+ * for everything; arrays and components stay wrapped. (The /v1/.../versions
+ * endpoint update_page uses still wants wrapped — the normalizer handles
+ * that internally via wrapPrimitivesAsValue.) loadOrBuildTemplate treats a
  * version mismatch the same as drift — rebuild and overwrite.
  */
-export const TEMPLATE_FORMAT_VERSION = 4;
-
-/**
- * PascalCase keys (PageTitle, MetaDescription, MetaKeywords, MetaTitle, …)
- * are system/metadata properties inherited from base content types. The
- * CMS rejects them when wrapped in {value: …} on the write endpoint —
- * even though the read endpoint returns them wrapped. Custom user-defined
- * properties are camelCase by convention and DO require the wrap. This
- * helper distinguishes the two by first-letter case so example values
- * and submissionExample show the flat shape for system fields.
- */
-function isFlatSystemKey(key: string): boolean {
-  if (!key) return false;
-  const first = key[0];
-  return !!first && first === first.toUpperCase() && first !== first.toLowerCase();
-}
+export const TEMPLATE_FORMAT_VERSION = 5;
 
 // ---------------------------------------------------------------------------
-// Wrap raw example values into the CMS submission shape so the agent can
-// copy the example directly into propertiesJson without composing the
-// wrapping rules. The CMS API expects:
-//   - primitive  → {"value": <primitive>}
+// Wrap raw example values into the CMS submission shape the create endpoint
+// expects. Used for both per-property `example` values and the top-level
+// `submissionExample` skeleton. Shape rules (for /preview3/experimental/content):
+//   - primitive  → <primitive>            (FLAT — wrapping rejected)
 //   - component  → {"properties": {<key>: {"value": <primitive>}, …}}
 //   - object[]   → {"value": [{"properties": {<key>: {"value": …}}}, …]}
 //   - scalar[]   → {"value": [<scalar>, …]}
 // contentId / contentId[] examples stay raw — they're already string IDs and
-// the CMS accepts them as-is (no wrapping required for content references).
+// the CMS accepts them as-is.
 // ---------------------------------------------------------------------------
 
 function wrapComponentObject(raw: Record<string, unknown>): { properties: Record<string, unknown> } {
@@ -49,7 +38,7 @@ function wrapComponentObject(raw: Record<string, unknown>): { properties: Record
   return { properties };
 }
 
-function wrapExample(rawExample: unknown, type: string, key?: string): unknown {
+function wrapExample(rawExample: unknown, type: string): unknown {
   // Content references stay raw — they're string IDs.
   if (type === "contentId" || type === "contentId[]") return rawExample;
 
@@ -69,14 +58,15 @@ function wrapExample(rawExample: unknown, type: string, key?: string): unknown {
     };
   }
 
-  // PascalCase system metadata fields (PageTitle, MetaDescription, …)
-  // get a flat scalar — the CMS write endpoint rejects them wrapped.
-  if (key && isFlatSystemKey(key) && !type.endsWith("[]")) {
-    return rawExample;
+  // Scalar arrays still wrap with {value: [...]} — only the elements are
+  // bare scalars.
+  if (type.endsWith("[]")) {
+    return { value: rawExample };
   }
 
-  // Scalars + scalar arrays + URL types — single {value: …} wrapper.
-  return { value: rawExample };
+  // Plain primitives: FLAT. /preview3/experimental/content rejects
+  // {value: <primitive>} for every primitive field, not just system ones.
+  return rawExample;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +272,7 @@ export async function buildPropertyFromCms(
   const prop: TemplateProperty = {
     key, label, type: mapped.type, required,
     description: buildDescription(label, cmsProp, extraHints),
-    example: wrapExample(mapped.example, mapped.type, key),
+    example: wrapExample(mapped.example, mapped.type),
   };
 
   if (cmsProp.minLength != null) prop.minLength = cmsProp.minLength;

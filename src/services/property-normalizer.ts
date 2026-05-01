@@ -2,21 +2,31 @@
  * Coerce caller-provided property values into the canonical CMS submission
  * shape, using the cached template to know each property's type.
  *
- * Why this exists: Optimizely's submission format is fiddly. Primitives wrap
- * as {value: …}, components as {properties: {…}}, component arrays as
- * {value: [{properties: {…}}, …]}, scalar arrays as {value: […]}, and
- * content references stay raw. Agents — even capable ones — get this wrong
- * on the first try, then over-correct in the wrong direction (e.g. "just
- * make everything flat") because the API errors are cryptic .NET
- * deserialization messages that don't name the shape they wanted.
+ * The two CMS write surfaces want DIFFERENT shapes for primitive values:
  *
- * The fix: accept any reasonable shape (flat OR wrapped, with or without
- * intermediate {properties:…} layers) and normalize to the one shape the
- * CMS accepts. The template tells us the type of every key, so the
- * wrapping rule is deterministic — no guessing.
+ *   POST /preview3/experimental/content   (create_page)
+ *     primitives MUST be flat: "title": "Hello"
+ *     wrapping with {value: …} is rejected as
+ *       "Cannot get the value of a token type 'StartObject' as a string."
  *
- * Properties not in the template pass through untouched (we can't normalize
- * what we don't know about, and unknown keys may be intentional).
+ *   POST/PATCH /v1/content/{id}/versions   (update_page)
+ *     primitives are stored AND accepted wrapped: "title": {"value": "Hello"}
+ *     this matches the read shape returned by the same endpoint.
+ *
+ * Arrays and components stay wrapped on both surfaces.
+ *
+ * The agent doesn't have to know any of this — they pass values flat OR
+ * wrapped, the normalizer adapts to whichever shape the receiving surface
+ * requires via the `wrapPrimitivesAsValue` option.
+ *
+ * The earlier PascalCase heuristic (only PageTitle/MetaDescription flat)
+ * masked a wider issue and only matched a coincidence in the CompetitorComparisonPage
+ * type — production logs after that fix shipped showed every camelCase
+ * primitive (eyebrow, comparisonDescription, …) hitting the same .NET
+ * StartObject error. The fix is per-surface, not per-key.
+ *
+ * Properties not in the template pass through untouched (we can't
+ * normalize what we don't know about, and unknown keys may be intentional).
  */
 
 import type { TemplateProperty } from "../types.js";
@@ -26,6 +36,16 @@ export interface NormalizationWarning {
   key: string;
   /** Short human-readable description of what was changed or what looks off. */
   message: string;
+}
+
+export interface NormalizationOptions {
+  /**
+   * If true, primitive values are emitted as {value: <primitive>} (the
+   * shape /v1/ versions endpoints expect). If false (default), primitives
+   * pass through flat (the shape /preview3/experimental/content expects).
+   * Arrays and components are always wrapped regardless of this flag.
+   */
+  wrapPrimitivesAsValue?: boolean;
 }
 
 export interface NormalizationResult {
@@ -74,30 +94,6 @@ function unwrapDeep(v: unknown): unknown {
 
 function isPrimitive(v: unknown): v is string | number | boolean | null {
   return v === null || ["string", "number", "boolean"].includes(typeof v);
-}
-
-/**
- * Optimizely's CMS REST API has a quirk that took a real production
- * incident to pin down: PascalCase property keys (PageTitle,
- * MetaDescription, MetaKeywords, MetaTitle, …) are system/metadata
- * fields inherited from base content types like `_Page`. They live in
- * the `properties` map alongside custom fields, but the WRITE endpoint
- * rejects them when wrapped in {value: …} with the message
- *   "Cannot get the value of a token type 'StartObject' as a string."
- *
- * Custom user-defined properties are camelCase by convention
- * (comparisonHeadline, intelStats, …) and DO require the {value: …}
- * wrap. The first-letter-case test cleanly distinguishes the two
- * without instrumenting the upstream contenttype response.
- *
- * The READ endpoint returns these flat fields wrapped, which is what
- * led the agent to assume the same shape works for writes — it
- * doesn't, only for these particular keys.
- */
-function isFlatSystemKey(key: string): boolean {
-  if (!key) return false;
-  const first = key[0];
-  return !!first && first === first.toUpperCase() && first !== first.toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +149,8 @@ function normalizeComponentItem(item: unknown, key: string, warnings: Normalizat
 function normalizeValue(
   value: unknown,
   prop: TemplateProperty,
-  warnings: NormalizationWarning[]
+  warnings: NormalizationWarning[],
+  options: NormalizationOptions
 ): unknown {
   // ---- contentId / contentId[] : raw string IDs, no wrapping ----
   if (prop.type === "contentId") {
@@ -225,16 +222,12 @@ function normalizeValue(
   }
 
   // ---- primitive scalars (string, url, boolean, number, etc.) ----
-  // Strip any number of accidental wrappers down to the inner primitive.
-  // Then either re-wrap as {value: …} (for custom user-defined fields)
-  // or pass through flat (for PascalCase system/metadata fields like
-  // PageTitle / MetaDescription that the CMS write endpoint rejects when
-  // wrapped — see isFlatSystemKey for the reasoning).
+  // Strip any number of accidental wrappers down to the inner primitive,
+  // then emit flat or wrapped depending on the destination surface.
+  // /preview3/experimental/content (create_page) wants flat. /v1/.../versions
+  // (update_page) wants {value: …}. Caller picks via wrapPrimitivesAsValue.
   const inner = unwrapDeep(value);
-  if (isFlatSystemKey(prop.key)) {
-    return inner;
-  }
-  return { value: inner };
+  return options.wrapPrimitivesAsValue ? { value: inner } : inner;
 }
 
 /**
@@ -243,8 +236,12 @@ function normalizeValue(
  */
 export function normalizeProperties(
   raw: Record<string, unknown>,
-  templateProps: TemplateProperty[]
+  templateProps: TemplateProperty[],
+  options: NormalizationOptions = {}
 ): NormalizationResult {
+  const opts: Required<NormalizationOptions> = {
+    wrapPrimitivesAsValue: options.wrapPrimitivesAsValue ?? false,
+  };
   const propByKey = new Map(templateProps.map((p) => [p.key, p]));
   const lowercaseLookup = new Map(
     templateProps.map((p) => [p.key.toLowerCase(), p.key])
@@ -265,7 +262,7 @@ export function normalizeProperties(
           key,
           message: `'${key}' did not match any template property exactly. Using '${realKey}' (case-insensitive match).`,
         });
-        normalized[realKey] = normalizeValue(value, prop!, warnings);
+        normalized[realKey] = normalizeValue(value, prop!, warnings, opts);
         continue;
       }
     }
@@ -279,7 +276,7 @@ export function normalizeProperties(
       continue;
     }
 
-    normalized[prop.key] = normalizeValue(value, prop, warnings);
+    normalized[prop.key] = normalizeValue(value, prop, warnings, opts);
   }
 
   return { properties: normalized, warnings };

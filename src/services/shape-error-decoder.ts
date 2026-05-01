@@ -159,12 +159,6 @@ function describeShape(value: unknown): string {
   return typeof value;
 }
 
-function isFlatSystemKey(key: string): boolean {
-  if (!key) return false;
-  const first = key[0];
-  return !!first && first === first.toUpperCase() && first !== first.toLowerCase();
-}
-
 function expectedShapeFor(prop: TemplateProperty | undefined): string | undefined {
   if (!prop) return undefined;
   switch (prop.type) {
@@ -178,12 +172,11 @@ function expectedShapeFor(prop: TemplateProperty | undefined): string | undefine
       return "[<32-char hex string>, …]";
     default:
       if (prop.type.endsWith("[]")) return "{value: [<primitive>, …]}";
-      // PascalCase system metadata fields take a flat primitive, not
-      // {value: …}. Telling the agent the wrapped shape would be
-      // actively misleading and is exactly the bug that motivated this
-      // decoder.
-      if (isFlatSystemKey(prop.key)) return `<${prop.type}> (flat — no wrapper for system metadata fields)`;
-      return `{value: <${prop.type}>}`;
+      // Plain primitives: FLAT for the create endpoint. The earlier
+      // PascalCase-only carve-out turned out to be too narrow — the
+      // /preview3/experimental/content surface rejects {value: <primitive>}
+      // for ALL primitive fields, not just system ones.
+      return `<${prop.type}> (flat — primitives are not wrapped on create_page)`;
   }
 }
 

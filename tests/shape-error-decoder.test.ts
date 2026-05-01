@@ -30,7 +30,7 @@ const arrayProp: TemplateProperty = {
 };
 
 describe("decodeShapeError", () => {
-  it("turns the .NET StartObject-as-string error into a primitive_wanted hint (camelCase custom field expects wrapper)", () => {
+  it("turns the .NET StartObject-as-string error into a primitive_wanted hint with flat expected shape (camelCase)", () => {
     const hints = decodeShapeError(
       {
         error: "Validation failed.",
@@ -41,17 +41,16 @@ describe("decodeShapeError", () => {
           },
         ],
       },
-      { headline: { value: { value: "Hi" } } },
+      { headline: { value: "Hi" } },
       [stringProp]
     );
     expect(hints).toHaveLength(1);
     expect(hints[0].field).toBe("headline");
     expect(hints[0].message).toMatch(/primitive/i);
-    expect(hints[0].expectedShape).toMatch(/value/);
-    expect(hints[0].sentShape).toMatch(/value/);
+    expect(hints[0].expectedShape).toMatch(/flat/);
   });
 
-  it("for PageTitle (PascalCase system field), expectedShape says flat — no wrapper", () => {
+  it("for PageTitle (PascalCase) the expected shape is also flat", () => {
     const hints = decodeShapeError(
       {
         error: "Validation failed.",
@@ -68,7 +67,6 @@ describe("decodeShapeError", () => {
     expect(hints).toHaveLength(1);
     expect(hints[0].field).toBe("PageTitle");
     expect(hints[0].expectedShape).toMatch(/flat/);
-    expect(hints[0].expectedShape).not.toMatch(/value/);
   });
 
   it("turns the array-expected error into an array_wanted hint", () => {
