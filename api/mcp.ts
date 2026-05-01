@@ -83,16 +83,103 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ...(toolName ? { tool: toolName } : {}),
       });
 
+      // Capture the JSON-RPC response body as the transport streams it,
+      // so the per-request summary log can hoist outcome fields (success,
+      // stage, fieldErrors count, shapeHints / normalizationNotes flags)
+      // onto a single line. Vercel's CLI surfaces one structured line per
+      // request reliably; collapsing the outcome here avoids relying on
+      // the inner tool.* logs that get dropped post-res.end.
+      const captured: Buffer[] = [];
+      // Patch res.write / res.end to tee the body into `captured`. Typed
+      // as a stripped-down interface that matches what the transport
+      // actually calls; @vercel/node's VercelResponse is a Node http.ServerResponse
+      // under the hood, so .write / .end with (chunk, encoding?, cb?)
+      // is safe.
+      type Patchable = {
+        write: (chunk: unknown, ...rest: unknown[]) => boolean;
+        end: (chunk?: unknown, ...rest: unknown[]) => unknown;
+      };
+      const patchable = res as unknown as Patchable;
+      const origWrite = patchable.write.bind(patchable);
+      const origEnd = patchable.end.bind(patchable);
+      patchable.write = (chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === "string") captured.push(Buffer.from(chunk));
+        else if (chunk instanceof Buffer) captured.push(chunk);
+        return origWrite(chunk, ...rest);
+      };
+      patchable.end = (chunk?: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === "string") captured.push(Buffer.from(chunk));
+        else if (chunk instanceof Buffer) captured.push(chunk);
+        return origEnd(chunk, ...rest);
+      };
+
       await transport.handleRequest(
         req as unknown as IncomingMessage,
         res as unknown as ServerResponse,
         req.body
       );
 
-      log.info("mcp.response", {
+      // Parse the captured response body — best-effort. SSE framing means
+      // the body looks like "event: message\ndata: {...}\n"; pull out the
+      // first JSON object after `data: `.
+      const bodyText = Buffer.concat(captured).toString("utf8");
+      const dataLine = bodyText.match(/data:\s*(\{[\s\S]*?\})/);
+      let outcome: {
+        success?: boolean;
+        stage?: string;
+        fieldErrorCount?: number;
+        hasShapeHints?: boolean;
+        hasNormalizationNotes?: boolean;
+      } = {};
+      if (dataLine && dataLine[1]) {
+        try {
+          const parsed = JSON.parse(dataLine[1]) as {
+            result?: { content?: Array<{ text?: string }> };
+            error?: unknown;
+          };
+          const text = parsed.result?.content?.[0]?.text;
+          if (typeof text === "string" && text.startsWith("{")) {
+            const inner = JSON.parse(text) as {
+              success?: boolean;
+              stage?: string;
+              fieldErrors?: unknown[];
+              shapeHints?: unknown[];
+              normalizationNotes?: unknown[];
+            };
+            outcome = {
+              success: inner.success,
+              stage: inner.stage,
+              fieldErrorCount: Array.isArray(inner.fieldErrors)
+                ? inner.fieldErrors.length
+                : undefined,
+              hasShapeHints:
+                Array.isArray(inner.shapeHints) && inner.shapeHints.length > 0,
+              hasNormalizationNotes:
+                Array.isArray(inner.normalizationNotes) &&
+                inner.normalizationNotes.length > 0,
+            };
+          }
+          if (parsed.error) {
+            outcome.success = false;
+          }
+        } catch {
+          /* unparseable response body — skip outcome */
+        }
+      }
+
+      log.info("mcp.complete", {
         traceId,
+        method_jsonrpc: jsonrpcMethod,
+        ...(toolName ? { tool: toolName } : {}),
         durationMs: Date.now() - start,
         status: res.statusCode,
+        ...(outcome.success !== undefined ? { success: outcome.success } : {}),
+        ...(outcome.stage ? { stage: outcome.stage } : {}),
+        ...(outcome.fieldErrorCount !== undefined
+          ? { fieldErrorCount: outcome.fieldErrorCount }
+          : {}),
+        ...(outcome.hasShapeHints ? { hasShapeHints: true } : {}),
+        ...(outcome.hasNormalizationNotes ? { hasNormalizationNotes: true } : {}),
       });
 
       return;
