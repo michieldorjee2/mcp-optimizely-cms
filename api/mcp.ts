@@ -90,11 +90,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // request reliably; collapsing the outcome here avoids relying on
       // the inner tool.* logs that get dropped post-res.end.
       const captured: Buffer[] = [];
-      // Patch res.write / res.end to tee the body into `captured`. Typed
-      // as a stripped-down interface that matches what the transport
-      // actually calls; @vercel/node's VercelResponse is a Node http.ServerResponse
-      // under the hood, so .write / .end with (chunk, encoding?, cb?)
-      // is safe.
+      // Patch res.write to tee bytes into `captured` (passes through
+      // immediately so progressive SSE writes still reach the wire);
+      // patch res.end to tee + DEFER. Vercel's serverless runtime stops
+      // capturing stdout once res.end fires, so any log emitted after the
+      // transport's final write is silently dropped — that's why
+      // mcp.complete previously never surfaced. We hold the end signal
+      // until after we've logged, then call origEnd ourselves.
       type Patchable = {
         write: (chunk: unknown, ...rest: unknown[]) => boolean;
         end: (chunk?: unknown, ...rest: unknown[]) => unknown;
@@ -102,15 +104,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const patchable = res as unknown as Patchable;
       const origWrite = patchable.write.bind(patchable);
       const origEnd = patchable.end.bind(patchable);
+      let endChunk: unknown = undefined;
+      let endRest: unknown[] = [];
+      let endCalled = false;
       patchable.write = (chunk: unknown, ...rest: unknown[]) => {
         if (typeof chunk === "string") captured.push(Buffer.from(chunk));
         else if (chunk instanceof Buffer) captured.push(chunk);
         return origWrite(chunk, ...rest);
       };
       patchable.end = (chunk?: unknown, ...rest: unknown[]) => {
-        if (typeof chunk === "string") captured.push(Buffer.from(chunk));
-        else if (chunk instanceof Buffer) captured.push(chunk);
-        return origEnd(chunk, ...rest);
+        if (chunk !== undefined) {
+          if (typeof chunk === "string") captured.push(Buffer.from(chunk));
+          else if (chunk instanceof Buffer) captured.push(chunk);
+        }
+        endChunk = chunk;
+        endRest = rest;
+        endCalled = true;
+        return res; // claim success; we'll really end the response below
       };
 
       await transport.handleRequest(
@@ -181,6 +191,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ...(outcome.hasShapeHints ? { hasShapeHints: true } : {}),
         ...(outcome.hasNormalizationNotes ? { hasNormalizationNotes: true } : {}),
       });
+
+      // Now actually end the response. Up to here res.end was deferred
+      // so the log above lands while stdout capture is still attached.
+      if (endCalled) {
+        origEnd(endChunk, ...endRest);
+      }
 
       return;
     }
