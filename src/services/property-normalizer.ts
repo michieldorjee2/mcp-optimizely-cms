@@ -38,14 +38,39 @@ export interface NormalizationWarning {
   message: string;
 }
 
+/**
+ * Which CMS write surface the caller is targeting. The two surfaces use
+ * different shapes for the same data:
+ *
+ *   "create"  → POST /preview3/experimental/content
+ *               Everything FLAT. Primitives as bare scalars; component arrays
+ *               as bare arrays; components as bare objects with bare field
+ *               values. Wrapping in {value: …} or {properties: …} is rejected.
+ *
+ *   "update"  → POST/PATCH /v1/content/{id}/versions
+ *               Everything WRAPPED. Primitives as {value: <prim>}, components
+ *               as {properties: {<field>: {value: <prim>}, …}}, component
+ *               arrays as {value: [{properties: {…}}, …]}. Matches the read
+ *               shape returned by the same surface.
+ *
+ * Both surfaces leave content references (contentId / contentId[]) raw.
+ *
+ * Backwards-compat: `wrapPrimitivesAsValue` (boolean) is honored — true is
+ * treated as `surface: "update"`, false/undefined as `surface: "create"`.
+ */
+export type CmsSurface = "create" | "update";
+
 export interface NormalizationOptions {
-  /**
-   * If true, primitive values are emitted as {value: <primitive>} (the
-   * shape /v1/ versions endpoints expect). If false (default), primitives
-   * pass through flat (the shape /preview3/experimental/content expects).
-   * Arrays and components are always wrapped regardless of this flag.
-   */
+  /** Target write surface. Defaults to "create". */
+  surface?: CmsSurface;
+  /** @deprecated use `surface` instead. true ≡ surface "update", false ≡ "create". */
   wrapPrimitivesAsValue?: boolean;
+}
+
+function resolveSurface(options: NormalizationOptions): CmsSurface {
+  if (options.surface) return options.surface;
+  if (options.wrapPrimitivesAsValue) return "update";
+  return "create";
 }
 
 export interface NormalizationResult {
@@ -103,9 +128,16 @@ function isPrimitive(v: unknown): v is string | number | boolean | null {
 /**
  * Component item: either a raw {field1: v1, field2: v2, …} object, or
  * already-shaped {properties: {field1: {value: v1}, …}}, or a half-shape.
- * Accept all and emit {properties: {field1: {value: v1}, …}}.
+ * Accept all and emit the shape the target surface wants.
+ *   surface=create:  {field1: v1, field2: v2, …}                 (flat)
+ *   surface=update:  {properties: {field1: {value: v1}, …}}      (wrapped)
  */
-function normalizeComponentItem(item: unknown, key: string, warnings: NormalizationWarning[]): unknown {
+function normalizeComponentItem(
+  item: unknown,
+  key: string,
+  warnings: NormalizationWarning[],
+  surface: CmsSurface
+): unknown {
   if (!isPlainObject(item)) {
     warnings.push({
       key,
@@ -121,12 +153,19 @@ function normalizeComponentItem(item: unknown, key: string, warnings: Normalizat
     inner = item.properties;
   }
 
+  if (surface === "create") {
+    // Flat shape: each field is its bare value with any accidental
+    // {value: …} stripped.
+    const flatProps: Record<string, unknown> = {};
+    for (const [fieldKey, fieldVal] of Object.entries(inner)) {
+      flatProps[fieldKey] = unwrapDeep(fieldVal);
+    }
+    return flatProps;
+  }
+
+  // surface === "update": wrap each field as {value: <prim>}.
   const wrappedProps: Record<string, unknown> = {};
   for (const [fieldKey, fieldVal] of Object.entries(inner)) {
-    // Each field inside a component is itself either a primitive (needs
-    // {value: …}) or already wrapped. We don't have per-field types for
-    // sub-components in the template, so use a heuristic: if it looks
-    // already wrapped {value: X}, keep it; otherwise wrap.
     if (isPlainObject(fieldVal)) {
       const subKeys = Object.keys(fieldVal);
       if (subKeys.length === 1 && subKeys[0] === "value") {
@@ -137,8 +176,6 @@ function normalizeComponentItem(item: unknown, key: string, warnings: Normalizat
     if (Array.isArray(fieldVal) || isPrimitive(fieldVal)) {
       wrappedProps[fieldKey] = { value: fieldVal };
     } else {
-      // Unknown shape — pass through raw. CMS may accept (e.g. nested
-      // components inside a component) or reject loudly.
       wrappedProps[fieldKey] = fieldVal;
     }
   }
@@ -150,7 +187,7 @@ function normalizeValue(
   value: unknown,
   prop: TemplateProperty,
   warnings: NormalizationWarning[],
-  options: NormalizationOptions
+  surface: CmsSurface
 ): unknown {
   // ---- contentId / contentId[] : raw string IDs, no wrapping ----
   if (prop.type === "contentId") {
@@ -183,7 +220,7 @@ function normalizeValue(
 
   // ---- object[] : array of components ----
   if (prop.type === "object[]") {
-    // Accept either flat array or {value: [...]} or {value: {value: [...]}}
+    // Accept flat array OR {value: [...]} OR {value: {value: [...]}}
     const peeled = unwrapDeep(value);
     if (!Array.isArray(peeled)) {
       warnings.push({
@@ -192,15 +229,15 @@ function normalizeValue(
       });
       return value;
     }
-    return {
-      value: peeled.map((item) => normalizeComponentItem(item, prop.key, warnings)),
-    };
+    const items = peeled.map((item) => normalizeComponentItem(item, prop.key, warnings, surface));
+    // surface=create wants the array flat; surface=update wraps in {value: [...]}.
+    return surface === "create" ? items : { value: items };
   }
 
   // ---- object : single component ----
   if (prop.type === "object") {
     const peeled = unwrapOnce(value);
-    return normalizeComponentItem(peeled, prop.key, warnings);
+    return normalizeComponentItem(peeled, prop.key, warnings, surface);
   }
 
   // ---- scalar arrays (string[], url[], number[], etc.) ----
@@ -218,16 +255,12 @@ function normalizeValue(
         return value;
       }
     }
-    return { value: peeled };
+    return surface === "create" ? peeled : { value: peeled };
   }
 
-  // ---- primitive scalars (string, url, boolean, number, etc.) ----
-  // Strip any number of accidental wrappers down to the inner primitive,
-  // then emit flat or wrapped depending on the destination surface.
-  // /preview3/experimental/content (create_page) wants flat. /v1/.../versions
-  // (update_page) wants {value: …}. Caller picks via wrapPrimitivesAsValue.
+  // ---- primitive scalars ----
   const inner = unwrapDeep(value);
-  return options.wrapPrimitivesAsValue ? { value: inner } : inner;
+  return surface === "update" ? { value: inner } : inner;
 }
 
 /**
@@ -239,9 +272,7 @@ export function normalizeProperties(
   templateProps: TemplateProperty[],
   options: NormalizationOptions = {}
 ): NormalizationResult {
-  const opts: Required<NormalizationOptions> = {
-    wrapPrimitivesAsValue: options.wrapPrimitivesAsValue ?? false,
-  };
+  const surface = resolveSurface(options);
   const propByKey = new Map(templateProps.map((p) => [p.key, p]));
   const lowercaseLookup = new Map(
     templateProps.map((p) => [p.key.toLowerCase(), p.key])
@@ -262,7 +293,7 @@ export function normalizeProperties(
           key,
           message: `'${key}' did not match any template property exactly. Using '${realKey}' (case-insensitive match).`,
         });
-        normalized[realKey] = normalizeValue(value, prop!, warnings, opts);
+        normalized[realKey] = normalizeValue(value, prop!, warnings, surface);
         continue;
       }
     }
@@ -276,7 +307,7 @@ export function normalizeProperties(
       continue;
     }
 
-    normalized[prop.key] = normalizeValue(value, prop, warnings, opts);
+    normalized[prop.key] = normalizeValue(value, prop, warnings, surface);
   }
 
   return { properties: normalized, warnings };

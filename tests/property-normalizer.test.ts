@@ -164,38 +164,45 @@ describe("normalizeProperties — content references", () => {
   });
 });
 
-describe("normalizeProperties — scalar arrays", () => {
-  it("wraps a flat string[] in {value: [...]}", () => {
+describe("normalizeProperties — scalar arrays (default: create surface, fully flat)", () => {
+  it("flat string[] passes through flat", () => {
     const { properties } = normalizeProperties(
       { tags: ["a", "b"] },
       [stringArrayProp]
     );
-    expect(properties.tags).toEqual({ value: ["a", "b"] });
+    expect(properties.tags).toEqual(["a", "b"]);
   });
 
-  it("accepts {value: [...]} unchanged", () => {
+  it("agent-wrapped {value: [...]} unwraps to flat", () => {
     const { properties } = normalizeProperties(
       { tags: { value: ["a", "b"] } },
       [stringArrayProp]
+    );
+    expect(properties.tags).toEqual(["a", "b"]);
+  });
+
+  it("with surface=update wraps as {value: [...]}", () => {
+    const { properties } = normalizeProperties(
+      { tags: ["a", "b"] },
+      [stringArrayProp],
+      { surface: "update" }
     );
     expect(properties.tags).toEqual({ value: ["a", "b"] });
   });
 });
 
-describe("normalizeProperties — component arrays (object[])", () => {
-  it("wraps flat array of flat-prop items into {value: [{properties: {Value: {value: …}}}]}", () => {
+describe("normalizeProperties — component arrays (object[]) — create surface fully flat", () => {
+  it("flat array of flat-field items stays flat with flat-field items", () => {
     const { properties } = normalizeProperties(
       { intelStats: [{ Value: "494", Label: "employees" }] },
       [componentArrayProp]
     );
-    expect(properties.intelStats).toEqual({
-      value: [
-        { properties: { Value: { value: "494" }, Label: { value: "employees" } } },
-      ],
-    });
+    expect(properties.intelStats).toEqual([
+      { Value: "494", Label: "employees" },
+    ]);
   });
 
-  it("accepts items already shaped as {properties: {…}}", () => {
+  it("strips a {properties:{…}} wrapper an agent applied to each item", () => {
     const { properties } = normalizeProperties(
       {
         intelStats: [
@@ -204,33 +211,26 @@ describe("normalizeProperties — component arrays (object[])", () => {
       },
       [componentArrayProp]
     );
-    expect(properties.intelStats).toEqual({
-      value: [
-        { properties: { Value: { value: "494" }, Label: { value: "employees" } } },
-      ],
-    });
+    expect(properties.intelStats).toEqual([
+      { Value: "494", Label: "employees" },
+    ]);
   });
 
-  it("accepts {value: [...]} flat items at the outer layer", () => {
+  it("accepts an outer {value: [...]} wrap and strips it", () => {
     const { properties } = normalizeProperties(
       { intelStats: { value: [{ Value: "494", Label: "employees" }] } },
       [componentArrayProp]
     );
-    expect(properties.intelStats).toEqual({
-      value: [
-        { properties: { Value: { value: "494" }, Label: { value: "employees" } } },
-      ],
-    });
+    expect(properties.intelStats).toEqual([
+      { Value: "494", Label: "employees" },
+    ]);
   });
 
-  it("accepts mixed inner shapes — some wrapped, some flat", () => {
+  it("with surface=update emits the wrapped shape", () => {
     const { properties } = normalizeProperties(
-      {
-        intelStats: [
-          { Value: "494", Label: { value: "employees" } },
-        ],
-      },
-      [componentArrayProp]
+      { intelStats: [{ Value: "494", Label: "employees" }] },
+      [componentArrayProp],
+      { surface: "update" }
     );
     expect(properties.intelStats).toEqual({
       value: [
@@ -240,21 +240,16 @@ describe("normalizeProperties — component arrays (object[])", () => {
   });
 });
 
-describe("normalizeProperties — single component (object)", () => {
-  it("wraps a flat-field object as {properties: {…}}", () => {
+describe("normalizeProperties — single component (object) — create surface flat", () => {
+  it("flat-field object stays flat", () => {
     const { properties } = normalizeProperties(
       { cta: { Label: "Buy", Url: "https://x.com" } },
       [componentProp]
     );
-    expect(properties.cta).toEqual({
-      properties: {
-        Label: { value: "Buy" },
-        Url: { value: "https://x.com" },
-      },
-    });
+    expect(properties.cta).toEqual({ Label: "Buy", Url: "https://x.com" });
   });
 
-  it("accepts an already-shaped {properties: {…}} object", () => {
+  it("strips an agent's {properties:{…}} wrap with {value: …} fields", () => {
     const { properties } = normalizeProperties(
       {
         cta: {
@@ -262,6 +257,15 @@ describe("normalizeProperties — single component (object)", () => {
         },
       },
       [componentProp]
+    );
+    expect(properties.cta).toEqual({ Label: "Buy", Url: "https://x.com" });
+  });
+
+  it("with surface=update emits {properties: {<field>: {value: …}}}", () => {
+    const { properties } = normalizeProperties(
+      { cta: { Label: "Buy", Url: "https://x.com" } },
+      [componentProp],
+      { surface: "update" }
     );
     expect(properties.cta).toEqual({
       properties: {
