@@ -37,17 +37,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === "POST") {
-      // Per-IP rate limit. Generous default (60 req / min) — only catches
-      // pathological loops, not normal agent traffic. Backed by Upstash;
-      // no-ops if Redis isn't configured. Keyed by client IP so multi-
-      // tenant deployments don't share buckets.
+      // Per-IP rate limit. 300 req/min ≈ 5/sec averaged. The earlier
+      // 60/min was tight enough that real agent workflows tripped it
+      // routinely — a single create_page flow fires several get_page /
+      // list_page_templates probes plus the create itself, and an
+      // agent doing a batch of competitor pages clears 60/min in
+      // seconds. 300/min still catches runaway loops (the kind that
+      // would melt Optimizely's quota) without throttling normal use.
+      // Backed by Upstash; no-ops if Redis isn't configured. Keyed by
+      // client IP so multi-tenant deployments don't share buckets.
+      const RATE_LIMIT = 300;
       const ipHeader =
         (typeof req.headers["x-forwarded-for"] === "string" && req.headers["x-forwarded-for"]) ||
         req.socket?.remoteAddress ||
         "unknown";
       const ip = ipHeader.split(",")[0]?.trim() ?? "unknown";
-      const rl = await rateLimit({ key: `mcp:${ip}`, limit: 60, windowSec: 60 });
-      res.setHeader("X-RateLimit-Limit", "60");
+      const rl = await rateLimit({ key: `mcp:${ip}`, limit: RATE_LIMIT, windowSec: 60 });
+      res.setHeader("X-RateLimit-Limit", String(RATE_LIMIT));
       res.setHeader("X-RateLimit-Remaining", String(rl.remaining));
       res.setHeader("X-RateLimit-Reset", String(Math.floor(rl.resetAt / 1000)));
       if (!rl.allowed) {
