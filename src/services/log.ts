@@ -50,14 +50,21 @@ function emit(level: LogLevel, entry: LogFields) {
     level,
     ...entry,
   };
-  // Use stderr for warn/error so Vercel surfaces them in the logs UI's
-  // error stream; stdout for info/debug.
-  const stream = level === "warn" || level === "error" ? "stderr" : "stdout";
+  // Use console.* rather than process.stdout/stderr.write. Vercel's
+  // serverless runtime hooks console.log / console.warn / console.error
+  // explicitly and routes them through its log collector with
+  // request-correlation metadata; raw process.stdout writes that fire
+  // after `res.end()` (which is where tool.end / mcp.response live in
+  // our pipeline) get dropped because the stdout capture detaches once
+  // the response is finalized. Switching to console.* makes those late
+  // writes survive.
   const out = JSON.stringify(line);
-  if (stream === "stderr") {
-    process.stderr.write(out + "\n");
+  if (level === "error") {
+    console.error(out);
+  } else if (level === "warn") {
+    console.warn(out);
   } else {
-    process.stdout.write(out + "\n");
+    console.log(out);
   }
 }
 
@@ -122,6 +129,37 @@ export async function withTrace<T>(
 // returned shape and emit a `tool.failure` warn line when success===false, so
 // these calls are greppable in Vercel logs alongside thrown errors.
 // ---------------------------------------------------------------------------
+
+// Send a tool-failure event to Sentry. Dynamic import to avoid a static
+// cycle with sentry.ts (which imports `log` from this file). Fire-and-
+// forget: never blocks or rejects the calling tool handler.
+async function captureToolFailure(ctx: {
+  tool: string;
+  traceId?: string;
+  stage?: string;
+  status?: number;
+  error?: string;
+  fieldErrors?: Array<{ field?: string; detail?: string }>;
+}): Promise<void> {
+  try {
+    const { captureMessage } = await import("./sentry.js");
+    await captureMessage(
+      `${ctx.tool} failed${ctx.stage ? ` at stage=${ctx.stage}` : ""}${ctx.status ? ` (HTTP ${ctx.status})` : ""}: ${ctx.error ?? "no error detail"}`,
+      "warning",
+      {
+        tool: ctx.tool,
+        ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+        extra: {
+          stage: ctx.stage,
+          status: ctx.status,
+          fieldErrors: ctx.fieldErrors,
+        },
+      }
+    );
+  } catch {
+    /* swallowed — sentry-shim already swallows internally, this is defense in depth */
+  }
+}
 
 // Keys whose values can blow up the log line — truncate their string form.
 const PARAM_TRUNCATE_KEYS = new Set(["propertiesJson"]);
@@ -191,6 +229,17 @@ export async function withToolLogging<T>(
         endpoint: r.endpoint,
         error: errorSummary(r.error),
         ...(r.fieldErrors && r.fieldErrors.length > 0 ? { fieldErrors: r.fieldErrors } : {}),
+      });
+      // Also send to Sentry as a warning so failure history survives outside
+      // Vercel's flaky log retention. Fire-and-forget — don't make tool
+      // responses slower or fail because Sentry is unreachable.
+      void captureToolFailure({
+        tool: context.tool,
+        traceId: context.traceId,
+        stage: r.stage,
+        status: r.status,
+        error: errorSummary(r.error),
+        fieldErrors: r.fieldErrors,
       });
       // Inject the traceId into the response so the agent (which often
       // doesn't surface response headers) can quote it back when reporting
