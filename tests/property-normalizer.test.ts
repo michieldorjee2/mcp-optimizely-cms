@@ -243,6 +243,74 @@ describe("normalizeProperties — single component (object)", () => {
   });
 });
 
+describe("normalizeProperties — PascalCase system metadata fields", () => {
+  const pageTitle: TemplateProperty = {
+    key: "PageTitle",
+    label: "Page Title",
+    type: "string",
+    required: true,
+    description: "",
+    example: "",
+  };
+  const metaDescription: TemplateProperty = {
+    key: "MetaDescription",
+    label: "Meta Description",
+    type: "string",
+    required: true,
+    description: "",
+    example: "",
+  };
+
+  it("PageTitle: flat string passes through flat", () => {
+    const { properties } = normalizeProperties(
+      { PageTitle: "Hello world" },
+      [pageTitle]
+    );
+    expect(properties.PageTitle).toBe("Hello world");
+  });
+
+  it("PageTitle: agent-wrapped {value: …} gets unwrapped to flat", () => {
+    const { properties } = normalizeProperties(
+      { PageTitle: { value: "Hello world" } },
+      [pageTitle]
+    );
+    expect(properties.PageTitle).toBe("Hello world");
+  });
+
+  it("PageTitle: doubly-wrapped also unwraps to flat", () => {
+    const { properties } = normalizeProperties(
+      { PageTitle: { value: { value: "Hello world" } } },
+      [pageTitle]
+    );
+    expect(properties.PageTitle).toBe("Hello world");
+  });
+
+  it("MetaDescription follows the same rule", () => {
+    const { properties } = normalizeProperties(
+      { MetaDescription: { value: "Compare X to Y" } },
+      [metaDescription]
+    );
+    expect(properties.MetaDescription).toBe("Compare X to Y");
+  });
+
+  it("camelCase custom field with same content keeps wrapping", () => {
+    const headline: TemplateProperty = {
+      key: "headline",
+      label: "Headline",
+      type: "string",
+      required: true,
+      description: "",
+      example: { value: "" },
+    };
+    const { properties } = normalizeProperties(
+      { headline: "Hello world", PageTitle: "Hello world" },
+      [headline, pageTitle]
+    );
+    expect(properties.headline).toEqual({ value: "Hello world" });
+    expect(properties.PageTitle).toBe("Hello world");
+  });
+});
+
 describe("normalizeProperties — unknowns + case", () => {
   it("recovers from case mismatch and warns", () => {
     const { properties, warnings } = normalizeProperties(
