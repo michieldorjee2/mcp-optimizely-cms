@@ -78,6 +78,14 @@ export interface Template {
   properties: TemplateProperty[];
   /** Fields that require references to existing content (can't be created inline) */
   contentReferences: string[];
+  /**
+   * One ready-to-paste skeleton for create_page's `propertiesJson` showing
+   * every required field populated with example values in the exact wrapped
+   * shape the CMS expects. The single source of truth for "what does a
+   * valid submission look like" — saves the agent from composing per-field
+   * wrapping rules from the per-property examples.
+   */
+  submissionExample?: Record<string, unknown>;
   createdAt: string;
   /**
    * SHA-256 hash of the underlying CMS content-type definition at the time

@@ -11,6 +11,12 @@ import {
 } from "../services/cms-api.js";
 import { errorToResponse } from "../services/errors.js";
 import { stableHash } from "../services/hash.js";
+import { loadOrBuildTemplate } from "../services/template-loader.js";
+import {
+  normalizeProperties,
+  type NormalizationWarning,
+} from "../services/property-normalizer.js";
+import { decodeShapeError } from "../services/shape-error-decoder.js";
 
 export const updatePageSchema = z.object({
   contentId: z
@@ -46,7 +52,7 @@ export const updatePageSchema = z.object({
     .string()
     .default("{}")
     .describe(
-      "JSON-encoded object of property values to change. Only the keys you include are updated; everything else carries over from the existing version (deep merge). Use the same wrapped shape as create_page — primitive values as {\"value\": ...}, components as nested {\"properties\": {...}}. Run get_page first to see the current property shape and copy the structure. Example: '{\"headline\": {\"value\": \"New title\"}}'."
+      "JSON-encoded object of property values to change. Only the keys you include are updated; everything else carries over from the existing version (deep merge). The tool auto-normalizes — pass values flat ({\"headline\": \"New title\"}) or already wrapped ({\"headline\": {\"value\": \"New title\"}}); both work. Component arrays accept flat or pre-shaped items. Run get_page first if you want to see the canonical shape; coercions are reported under `normalizationNotes`. Example: '{\"headline\": \"New title\"}'."
     ),
 });
 
@@ -65,7 +71,8 @@ function getVersionId(v: CmsVersionSummary | undefined | null): string | undefin
 export async function updatePage(
   input: UpdatePageInput,
   clientId: string,
-  clientSecret: string
+  clientSecret: string,
+  graphKey?: string
 ) {
   // Parse property overrides
   let overrides: Record<string, unknown> = {};
@@ -191,8 +198,32 @@ export async function updatePage(
   }
 
   // ---------------------------------------------------------------------
-  // 4. Build the new version body: full base properties + caller overrides.
+  // 4. Normalize the caller's overrides into the canonical CMS shape (flat
+  //    OR wrapped → wrapped), keyed by the base version's contentType. The
+  //    base.properties already come from the CMS in canonical shape, so
+  //    only the overrides need normalization. Any coercions are surfaced
+  //    under normalizationNotes — see create_page for the same flow.
   // ---------------------------------------------------------------------
+  const baseTypeName = Array.isArray(base.contentType)
+    ? base.contentType[base.contentType.length - 1]
+    : base.contentType;
+
+  let normalizationWarnings: NormalizationWarning[] = [];
+  if (baseTypeName && Object.keys(overrides).length > 0) {
+    const template = await loadOrBuildTemplate(
+      baseTypeName,
+      graphKey,
+      clientId,
+      clientSecret
+    ).catch(() => null);
+    if (template) {
+      const result = normalizeProperties(overrides, template.properties);
+      overrides = result.properties;
+      normalizationWarnings = result.warnings;
+    }
+  }
+
+  // Build the new version body: full base properties + caller overrides.
   const mergedProperties: Record<string, unknown> = {
     ...(base.properties ?? {}),
     ...overrides,
@@ -279,11 +310,34 @@ export async function updatePage(
     });
   } catch (e) {
     const parsed = errorToResponse(e);
+    // Decode .NET deserializer errors ("Cannot get the value of a token
+    // type 'StartObject' as a string") into per-field shape hints if we
+    // have the template handy. Mirrors create_page's failure handling.
+    let shapeHints: ReturnType<typeof decodeShapeError> = [];
+    if (baseTypeName) {
+      try {
+        const template = await loadOrBuildTemplate(
+          baseTypeName,
+          graphKey,
+          clientId,
+          clientSecret
+        );
+        if (template) {
+          shapeHints = decodeShapeError(parsed, overrides, template.properties);
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
     return {
       success: false,
       stage: "create-version",
       error: parsed.error,
       apiError: parsed.apiError,
+      ...(shapeHints.length > 0 ? { shapeHints } : {}),
+      ...(normalizationWarnings.length > 0
+        ? { normalizationNotes: normalizationWarnings }
+        : {}),
       hint:
         "The CMS rejected the new version. Most common cause: one of the " +
         "properties you provided has the wrong shape. Compare your override " +
@@ -385,5 +439,8 @@ export async function updatePage(
     routeSegmentRepinned,
     ...(routeSegmentRepinError ? { routeSegmentRepinError } : {}),
     updatedFields: Object.keys(overrides),
+    ...(normalizationWarnings.length > 0
+      ? { normalizationNotes: normalizationWarnings }
+      : {}),
   };
 }

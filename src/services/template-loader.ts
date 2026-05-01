@@ -106,15 +106,14 @@ async function buildAndSave(
   if (!liveCt.properties || Object.keys(liveCt.properties).length === 0) {
     return null;
   }
-  const { properties, contentReferences } = await buildPropertiesFromContentType(
-    liveCt,
-    graphKey
-  );
+  const { properties, contentReferences, submissionExample } =
+    await buildPropertiesFromContentType(liveCt, graphKey);
   const template: Template = {
     name: contentTypeName,
     contentType: contentTypeName,
     properties,
     contentReferences,
+    submissionExample,
     createdAt: new Date().toISOString(),
     schemaHash: stableHash(liveCt.properties ?? {}),
     formatVersion: TEMPLATE_FORMAT_VERSION,
