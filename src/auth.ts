@@ -1,7 +1,10 @@
 import { createHmac, randomBytes } from "node:crypto";
 
 function getAuthSecret(): string {
-  return process.env.MCP_AUTH_SECRET || "default-dev-secret-" + (process.env.OPTIMIZELY_CMS_CLIENT_ID || "local");
+  return (
+    process.env.MCP_AUTH_SECRET ||
+    "default-dev-secret-" + (process.env.OPTIMIZELY_CMS_CLIENT_ID || "local")
+  );
 }
 
 export function getBaseUrl(req: unknown): string {
@@ -30,10 +33,29 @@ export function getBaseUrl(req: unknown): string {
 // JWT token generation & validation
 // ---------------------------------------------------------------------------
 
+/**
+ * Access-token lifetime.
+ *
+ * This used to be 3600s. That was the single biggest source of silent
+ * failure in the Limitless / account_page pipeline: Opal's TMS stores the
+ * token it gets back from /token, and this shim issued neither a
+ * refresh_token nor a refresh_url — so an hour after anyone connected the
+ * "Limitless" connector, TMS dropped the credential entirely. Every
+ * account_page run after that hour got `Authentication is required` on all
+ * nine CMS tools, burned 10-15 minutes of research and 120-200 credits, and
+ * created no page.
+ *
+ * Two independent belts now: a long-lived access token (so expiry is a
+ * non-event even if refresh never fires) and a real refresh_token grant
+ * below (so a TMS that *does* honour expiry can renew unattended).
+ */
+const ACCESS_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60; // 1 year
+const REFRESH_TOKEN_TTL_SECONDS = 5 * 365 * 24 * 60 * 60; // 5 years
+
 export function generateToken(): string {
   const payload = {
     iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 3600,
+    exp: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
     scope: "mcp:full",
   };
   const payloadStr = JSON.stringify(payload);
@@ -43,6 +65,51 @@ export function generateToken(): string {
     .update(`${headerB64}.${payloadB64}`)
     .digest("base64url");
   return `${headerB64}.${payloadB64}.${sig}`;
+}
+
+export const ACCESS_TOKEN_EXPIRES_IN = ACCESS_TOKEN_TTL_SECONDS;
+
+/**
+ * Refresh token. Same HMAC-signed self-contained shape as the access token,
+ * marked with `typ: "refresh"` so a refresh token can't be replayed as an
+ * access token (and vice versa).
+ */
+export function generateRefreshToken(): string {
+  const payload = {
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + REFRESH_TOKEN_TTL_SECONDS,
+    typ: "refresh",
+    scope: "mcp:full",
+  };
+  const payloadStr = JSON.stringify(payload);
+  const payloadB64 = Buffer.from(payloadStr).toString("base64url");
+  const headerB64 = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const sig = createHmac("sha256", getAuthSecret())
+    .update(`${headerB64}.${payloadB64}`)
+    .digest("base64url");
+  return `${headerB64}.${payloadB64}.${sig}`;
+}
+
+export function validateRefreshToken(token: string): boolean {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    const [headerB64, payloadB64, sig] = parts;
+    if (!headerB64 || !payloadB64 || !sig) return false;
+    const expectedSig = createHmac("sha256", getAuthSecret())
+      .update(`${headerB64}.${payloadB64}`)
+      .digest("base64url");
+    if (sig !== expectedSig) return false;
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as {
+      exp?: number;
+      typ?: string;
+    };
+    if (payload.typ !== "refresh") return false;
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function validateToken(token: string): boolean {
@@ -55,7 +122,14 @@ export function validateToken(token: string): boolean {
       .update(`${headerB64}.${payloadB64}`)
       .digest("base64url");
     if (sig !== expectedSig) return false;
-    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as { exp?: number };
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as {
+      exp?: number;
+      typ?: string;
+    };
+    // A refresh token is signed with the same secret, so without this it
+    // would sail through as a bearer. Refresh tokens are only ever valid
+    // at /token under grant_type=refresh_token.
+    if (payload.typ === "refresh") return false;
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return false;
     return true;
   } catch {
@@ -75,9 +149,7 @@ export function generateAuthCode(redirectUri: string, codeChallenge?: string): s
     nonce: randomBytes(8).toString("hex"),
   });
   const payloadB64 = Buffer.from(payload).toString("base64url");
-  const sig = createHmac("sha256", getAuthSecret())
-    .update(payloadB64)
-    .digest("base64url");
+  const sig = createHmac("sha256", getAuthSecret()).update(payloadB64).digest("base64url");
   return `${payloadB64}.${sig}`;
 }
 
@@ -107,7 +179,10 @@ export function consumeAuthCode(code: string, redirectUri: string): boolean {
 // Stateless client registration — always succeeds
 // ---------------------------------------------------------------------------
 
-export function registerClient(_redirectUris: string[]): { clientId: string; clientSecret: string } {
+export function registerClient(_redirectUris: string[]): {
+  clientId: string;
+  clientSecret: string;
+} {
   const clientId = `mcp-client-${randomBytes(16).toString("hex")}`;
   const clientSecret = randomBytes(32).toString("hex");
   return { clientId, clientSecret };
@@ -124,7 +199,7 @@ export function getServerMetadata(baseUrl: string) {
     token_endpoint: `${baseUrl}/token`,
     registration_endpoint: `${baseUrl}/register`,
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "client_credentials"],
+    grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
     scopes_supported: ["mcp:full"],
