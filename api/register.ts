@@ -25,7 +25,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     client_id_issued_at: Math.floor(Date.now() / 1000),
     client_secret_expires_at: 0,
     redirect_uris: redirectUris,
-    grant_types: ["authorization_code", "client_credentials"],
+    grant_types: ["authorization_code", "client_credentials", "refresh_token"],
     response_types: ["code"],
     token_endpoint_auth_method: "client_secret_post",
   });
